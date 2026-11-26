@@ -3174,6 +3174,7 @@ struct ContentView: View {
         let wasRewriteMode = modeAtStop == .edit || self.isRecordingForRewrite
         let wasCommandMode = modeAtStop == .command || self.isRecordingForCommand
         let outputApp = route.deliversText && !wasRewriteMode && !wasCommandMode ? self.settings.activeOutputApp : nil
+        let shouldLog = route.deliversText && self.settings.captureLogEnabled
         let activeDictationSlot = self.currentDictationShortcutSlot(for: modeAtStop)
         let autoSendAtStop = self.activeDictationAutoSend && activeDictationSlot != nil && outputApp == nil
         let promptOverride = self.promptModeOverrideText
@@ -3476,6 +3477,9 @@ struct ContentView: View {
 
         let shouldPersistOutputs = outputRoute.savesHistory
         let shouldDeliverOutputs = outputRoute.deliversText
+        if shouldLog, shouldDeliverOutputs, !sendsExistingDraft, !finalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            CaptureLog.shared.record(.transcript(finalText))
+        }
         if !shouldPersistOutputs {
             DebugLogger.shared.info(
                 "Sandbox route active: suppressing clipboard/history/external typing side effects",

@@ -27,6 +27,7 @@ struct SettingsView: View {
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @ObservedObject private var settings = SettingsStore.shared
+    @ObservedObject private var captureLog = CaptureLog.shared
     @ObservedObject private var updater = SimpleUpdater.shared
     let selectedSection: SettingsSection
     let searchResults: [SettingsSearchResult]
@@ -784,6 +785,10 @@ struct SettingsView: View {
 
                                         self.outputAppSettings
                                             .settingsSearchTarget(.outputApp)
+                                        Divider().opacity(0.2)
+
+                                        self.captureLogSettings
+                                            .settingsSearchTarget(.captureLog)
                                         Divider().opacity(0.2)
 
                                         self.spokenSendSettings
@@ -1963,6 +1968,25 @@ struct SettingsView: View {
         let budget = SettingsStore.shared.audioHistoryBudgetBytes
         guard budget > 0 else { return 0 }
         return min(1, Double(self.audioHistoryUsageBytes) / Double(budget))
+    }
+
+    private var captureLogSettings: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            self.optionToggleRow(
+                title: "Keep an HTML Capture Log",
+                description: "Append screenshots and new dictation to a local page in Pictures/\(CaptureLogWriter.folderName).",
+                isOn: self.$settings.captureLogEnabled
+            )
+
+            Button("Open Capture Log") { self.captureLog.openPage() }
+                .fluidOutlinedButton()
+
+            if let error = self.captureLog.errorMessage {
+                Text(error)
+                    .font(self.theme.typography.bodySmall)
+                    .foregroundStyle(self.theme.palette.warning)
+            }
+        }
     }
 
     private var outputAppSettings: some View {

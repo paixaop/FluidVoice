@@ -3413,6 +3413,14 @@ final class SettingsStore: ObservableObject {
         self.defaults.bool(forKey: Keys.outputAppEnabled) ? self.outputApp : nil
     }
 
+    var captureLogEnabled: Bool {
+        get { self.defaults.bool(forKey: Keys.captureLogEnabled) }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.captureLogEnabled)
+        }
+    }
+
     // MARK: - Paste Last Transcription Settings
 
     /// Whether the "Paste Last Transcription" global hotkey is active. Opt-in and off by default.
@@ -6322,6 +6330,7 @@ private extension SettingsStore {
         static let screenshotWindow = "ScreenshotWindow"
         static let outputApp = "OutputApp"
         static let outputAppEnabled = "OutputAppEnabled"
+        static let captureLogEnabled = "CaptureLogEnabled"
         static let commandModeLinkedToGlobal = "CommandModeLinkedToGlobal"
         static let commandModeShortcutEnabled = "CommandModeShortcutEnabled"
 

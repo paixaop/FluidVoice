@@ -62,6 +62,7 @@ final class ScreenshotCapture {
         let mode = settings.screenshotMode
         let savedWindow = settings.screenshotWindow
         let outputApp = settings.activeOutputApp
+        let shouldLog = settings.captureLogEnabled
         do {
             guard CGPreflightScreenCaptureAccess() else { throw CaptureError.permissionRequired }
             let capturesWindow = mode == .window
@@ -89,7 +90,10 @@ final class ScreenshotCapture {
             }
 
             let image = try await Self.captureImage(for: filter)
+            let capturedAt = Date.now
             let screenshot = try await Self.savePNG(image)
+
+            if shouldLog { CaptureLog.shared.record(.screenshot(screenshot.png), at: capturedAt) }
 
             if let capturedWindow, capturedWindow != savedWindow,
                settings.screenshotMode == .window, settings.screenshotWindow == savedWindow
