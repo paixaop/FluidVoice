@@ -48,10 +48,44 @@ final class CaptureAI: ObservableObject {
 
     nonisolated enum Credential: String, CaseIterable { case apiKey, chatGPT }
 
+    nonisolated enum Effort: String, CaseIterable {
+        case automatic, none, minimal, low, medium, high, xhigh, max
+
+        var title: String {
+            switch self {
+            case .automatic: "Model Default"
+            case .xhigh: "Extra High"
+            case .max: "Maximum"
+            default: self.rawValue.capitalized
+            }
+        }
+
+        static func options(for model: String) -> [Self] {
+            let id = model.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if id.hasPrefix("gpt-6.1-sol") {
+                return [.automatic, .low, .medium, .high, .xhigh, .max]
+            }
+            return self.allCases
+        }
+
+        func apply(to config: inout LLMClient.Config) {
+            guard self != .automatic, Self.options(for: config.model).contains(self) else { return }
+            config.extraParameters["reasoning_effort"] = self.rawValue
+            switch self {
+            case .automatic, .none, .minimal:
+                break
+            case .low, .medium, .high, .xhigh, .max:
+                config.maxTokens = Swift.max(config.maxTokens ?? 0, 25_000)
+                config.timeoutSeconds = Swift.max(config.timeoutSeconds ?? 0, 300)
+            }
+        }
+    }
+
     nonisolated static let analyzeKey = "CaptureAnalyzeScreenshots"
     nonisolated static let summaryKey = "CaptureSummarizeMeetings"
     nonisolated static let credentialKey = "CaptureOpenAICredential"
     nonisolated static let modelKey = "CaptureOpenAIModel"
+    nonisolated static let effortKey = "CaptureOpenAIReasoningEffort"
     nonisolated static let defaultModel = "gpt-6.1-sol"
     nonisolated static let baseURL = "https://api.openai.com/v1"
     nonisolated static let summaryFile = "summary.md"
@@ -215,6 +249,7 @@ final class CaptureAI: ObservableObject {
         let defaults = UserDefaults.standard
         let model = defaults.string(forKey: Self.modelKey)?.trimmingCharacters(in: .whitespacesAndNewlines)
         let selectedModel = model.flatMap { $0.isEmpty ? nil : $0 } ?? Self.defaultModel
+        let effort = defaults.string(forKey: Self.effortKey).flatMap(Effort.init(rawValue:)) ?? .automatic
         let token: String
         if defaults.string(forKey: Self.credentialKey) == Credential.chatGPT.rawValue {
             token = try await CaptureChatGPT.shared.accessToken()
@@ -224,7 +259,8 @@ final class CaptureAI: ObservableObject {
             }
             token = key
         }
-        let config = try await Self.request(prompt: prompt, parts: parts, model: selectedModel, token: token, maxTokens: maxTokens)
+        var config = try await Self.request(prompt: prompt, parts: parts, model: selectedModel, token: token, maxTokens: maxTokens)
+        effort.apply(to: &config)
         let response = try await LLMClient.shared.call(config)
         guard !response.content.isEmpty else { throw LLMError.invalidResponse }
         return response.content
