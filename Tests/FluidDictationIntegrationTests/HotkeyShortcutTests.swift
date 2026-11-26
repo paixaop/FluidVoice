@@ -1552,7 +1552,7 @@ final class HotkeyShortcutTests: XCTestCase {
             self.primaryDictationShortcutsKey, self.legacyHotkeyShortcutKey,
             "DictationPromptConfigurations", "PromptModeHotkeyShortcut", "PromptModeShortcutEnabled",
             "CommandModeHotkeyShortcut", "CommandModeShortcutEnabled", "RewriteModeHotkeyShortcut", "RewriteModeShortcutEnabled",
-            "CancelRecordingHotkeyShortcut", "MeetingRecordingHotkeyShortcut", "ScreenshotHotkeyShortcut",
+            "CancelRecordingHotkeyShortcut", "MeetingRecordingHotkeyShortcut", "ScreenshotHotkeyShortcut", "NewCaptureTranscriptHotkeyShortcut",
             self.pasteLastTranscriptionShortcutKey, self.pasteLastTranscriptionEnabledKey,
         ]
         self.withRestoredDefaults(keys: keys) {
@@ -2489,6 +2489,35 @@ final class HotkeyShortcutTests: XCTestCase {
 
         XCTAssertNil(manager.handleKeyEvent(type: .keyDown, event: down))
         XCTAssertEqual(screenshots, 2)
+    }
+
+    @MainActor
+    func testNewCaptureTranscriptShortcutSuppressesRepeatsAndChecksForConflicts() throws {
+        let settings = SettingsStore.shared
+        let previous = settings.newCaptureTranscriptHotkeyShortcut
+        defer { settings.newCaptureTranscriptHotkeyShortcut = previous }
+        let keyCode: CGKeyCode = 45
+        settings.newCaptureTranscriptHotkeyShortcut = HotkeyShortcut(keyCode: keyCode, modifierFlags: [.control, .command])
+        var transcripts = 0
+        let manager = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: {})
+        manager.setNewCaptureTranscriptCallback { transcripts += 1 }
+
+        let down = try self.primaryReleaseTestEvent(type: .keyDown, keyCode: keyCode)
+        let repeatDown = try self.primaryReleaseTestEvent(type: .keyDown, keyCode: keyCode, modifiers: [])
+        repeatDown.setIntegerValueField(.keyboardEventAutorepeat, value: 1)
+        let up = try self.primaryReleaseTestEvent(type: .keyUp, keyCode: keyCode, modifiers: [])
+        XCTAssertNil(manager.handleKeyEvent(type: .keyDown, event: down))
+        XCTAssertNil(manager.handleKeyEvent(type: .keyDown, event: repeatDown))
+        XCTAssertNil(manager.handleKeyEvent(type: .keyUp, event: up))
+        XCTAssertEqual(transcripts, 1)
+        XCTAssertNil(manager.handleKeyEvent(type: .keyDown, event: down))
+        XCTAssertEqual(transcripts, 2)
+
+        self.withIsolatedShortcutConflicts { settings in
+            let chord = HotkeyShortcut(keyCode: keyCode, modifierFlags: [.control, .command])
+            settings.screenshotHotkeyShortcut = chord
+            XCTAssertEqual(ContentView().shortcutConflictMessage(for: chord, target: .newCaptureTranscript), "Duplicate with Take Screenshot")
+        }
     }
 
     @MainActor

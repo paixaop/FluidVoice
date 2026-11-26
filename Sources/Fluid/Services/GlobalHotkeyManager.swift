@@ -319,6 +319,8 @@ final class GlobalHotkeyManager: NSObject {
     private var screenshotCallback: (() -> Void)?
     private var screenshotShortcutPressedKey: UInt16?
     private var pendingScreenshotModifier: HotkeyShortcut?
+    private var newCaptureTranscriptCallback: (() -> Void)?
+    private var newCaptureTranscriptPressedKey: UInt16?
     private var pasteLastTranscriptionCallback: (() -> Void)?
     private var hotkeyMode: HotkeyActivationMode = SettingsStore.shared.hotkeyMode
     private let automaticTapThresholdSeconds: TimeInterval = 0.4
@@ -1291,7 +1293,9 @@ final class GlobalHotkeyManager: NSObject {
         if self.handleMeetingRecordingShortcut(type: type, keyCode: keyCode, modifiers: eventModifiers, isAutorepeat: isAutorepeat) {
             return nil
         }
-        if self.handleScreenshotShortcut(type: type, keyCode: keyCode, modifiers: eventModifiers, isAutorepeat: isAutorepeat) {
+        if self.handleScreenshotShortcut(type: type, keyCode: keyCode, modifiers: eventModifiers, isAutorepeat: isAutorepeat) ||
+            self.handleNewCaptureTranscriptShortcut(type: type, keyCode: keyCode, modifiers: eventModifiers, isAutorepeat: isAutorepeat)
+        {
             return nil
         }
 
@@ -2749,6 +2753,9 @@ extension GlobalHotkeyManager {
         if let shortcut = SettingsStore.shared.screenshotHotkeyShortcut {
             shortcuts.append(shortcut)
         }
+        if let shortcut = SettingsStore.shared.newCaptureTranscriptHotkeyShortcut {
+            shortcuts.append(shortcut)
+        }
         if let shortcut = SettingsStore.shared.cancelRecordingHotkeyShortcut {
             shortcuts.append(shortcut)
         }
@@ -2856,6 +2863,7 @@ extension GlobalHotkeyManager {
         self.meetingShortcutPressedKey = nil
         self.screenshotShortcutPressedKey = nil
         self.pendingScreenshotModifier = nil
+        self.newCaptureTranscriptPressedKey = nil
         self.invalidateAllRecordingActions()
         self.modifierPressReceivedAt = nil
         self.currentStopPressReceivedAt = nil
@@ -2907,6 +2915,31 @@ extension GlobalHotkeyManager {
 
     func setScreenshotCallback(_ callback: @escaping () -> Void) {
         self.screenshotCallback = callback
+    }
+
+    func setNewCaptureTranscriptCallback(_ callback: @escaping () -> Void) {
+        self.newCaptureTranscriptCallback = callback
+    }
+
+    private func handleNewCaptureTranscriptShortcut(type: CGEventType, keyCode: UInt16, modifiers: NSEvent.ModifierFlags, isAutorepeat: Bool) -> Bool {
+        if self.newCaptureTranscriptPressedKey == keyCode {
+            if type == .keyUp {
+                self.newCaptureTranscriptPressedKey = nil
+                return true
+            }
+            if type == .keyDown, isAutorepeat { return true }
+            if type == .keyDown { self.newCaptureTranscriptPressedKey = nil }
+        }
+        guard type == .keyDown,
+              let shortcut = SettingsStore.shared.newCaptureTranscriptHotkeyShortcut,
+              shortcut.matches(keyCode: keyCode, modifiers: modifiers),
+              !self.isSessionLockedProvider()
+        else { return false }
+        guard !isAutorepeat else { return true }
+        self.markOtherInputDuringModifierOnly()
+        self.newCaptureTranscriptPressedKey = keyCode
+        self.newCaptureTranscriptCallback?()
+        return true
     }
 
     private func handleMeetingRecordingShortcut(type: CGEventType, keyCode: UInt16, modifiers: NSEvent.ModifierFlags, isAutorepeat: Bool) -> Bool {

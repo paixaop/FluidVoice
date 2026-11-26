@@ -2182,6 +2182,8 @@ extension SettingsView {
                 Divider().opacity(0.2)
                 self.captureLogSettings
                     .settingsSearchTarget(.captureLog)
+                self.newCaptureTranscriptShortcutSettings
+                    .settingsSearchTarget(.newCaptureTranscriptShortcut)
                 Divider().opacity(0.2)
                 CaptureAISettings()
                     .settingsSearchTarget(.captureAI)
@@ -2228,12 +2230,37 @@ extension SettingsView {
             Button("Open Capture Log") { self.captureLog.openPage() }
                 .fluidOutlinedButton()
 
+            if self.captureLog.isSummarizing {
+                ProgressView("Summarizing transcript…").controlSize(.small)
+            }
+
             if let error = self.captureLog.errorMessage {
                 Text(error)
                     .font(self.theme.typography.bodySmall)
                     .foregroundStyle(self.theme.palette.warning)
             }
         }
+    }
+
+    private var newCaptureTranscriptShortcutSettings: some View {
+        self.shortcutRow(
+            content: .init(
+                icon: "doc.badge.plus",
+                iconColor: .secondary,
+                title: ShortcutRecordingTarget.newCaptureTranscript.title,
+                description: "Open a fresh HTML capture transcript and keep the previous one."
+            ),
+            shortcut: self.settings.newCaptureTranscriptHotkeyShortcut,
+            isRecording: self.isRecording(.newCaptureTranscript),
+            isAnyRecordingActive: self.isRecordingAnyShortcut,
+            recordingMessage: self.isRecording(.newCaptureTranscript) ? self.shortcutRecordingMessage : nil,
+            onChangePressed: {
+                self.shortcutRecordingMessage = nil
+                self.activeShortcutRecordingTarget = .newCaptureTranscript
+            },
+            onRemovePressed: { self.settings.newCaptureTranscriptHotkeyShortcut = nil }
+        )
+        .disabled(!self.accessibilityEnabled)
     }
 
     private var outputAppSettings: some View {
