@@ -12,7 +12,8 @@ actor MeetingHTMLTranscript {
     private let startedHostTime: CMTime
     private let writeInterval: Duration
     private var latestSnapshot = MeetingLiveTranscriptSnapshot.empty
-    private var screenshots: [(hostTime: CMTime, path: String)] = []
+    private var screenshots: [(hostTime: CMTime, filename: String)] = []
+    private var imageAnalyses: [String: String] = [:]
     private var pendingWrite: Task<Void, Never>?
     private var stoppedAt: Date?
 
@@ -54,9 +55,23 @@ actor MeetingHTMLTranscript {
         let filename = "\(UUID().uuidString).png"
         let file = directory.appendingPathComponent(filename)
         try png.write(to: file, options: .atomic)
-        self.screenshots.append((hostTime, "screenshots/\(filename)"))
+        self.screenshots.append((hostTime, filename))
         self.scheduleWrite()
         return file
+    }
+
+    func addImageAnalysis(_ markdown: String, for screenshot: URL) throws {
+        let filename = screenshot.lastPathComponent
+        guard self.screenshots.contains(where: { $0.filename == filename }) else { return }
+        if self.stoppedAt == nil {
+            self.imageAnalyses[filename] = HTMLText.imageAnalysis(markdown)
+            self.scheduleWrite()
+        } else if FileManager.default.fileExists(atPath: self.url.path) {
+            // Update only the existing screenshot slot. Captions and timestamps are sealed.
+            try HTMLText.withTranscriptLock(in: self.url.deletingLastPathComponent()) {
+                try HTMLText.writeImageAnalysis(markdown, id: filename, to: self.url)
+            }
+        }
     }
 
     private func scheduleWrite() {
@@ -67,7 +82,7 @@ actor MeetingHTMLTranscript {
         }
     }
 
-    /// Seal the file at the capture boundary. Late caption callbacks and batch processing cannot change it.
+    /// Seal the capture timeline. A pending result can still fill an existing screenshot’s analysis slot.
     func finish(with snapshot: MeetingLiveTranscriptSnapshot, stoppedAt: Date) throws -> URL? {
         guard self.stoppedAt == nil else { return nil }
         self.stoppedAt = stoppedAt
@@ -78,7 +93,7 @@ actor MeetingHTMLTranscript {
         let origin = self.captureOrigin.current ?? self.startedHostTime
         let attachments = self.screenshots.map {
             CaptureTimelineImage(
-                fileName: URL(fileURLWithPath: $0.path).lastPathComponent,
+                fileName: $0.filename,
                 seconds: MeetingLiveTimeConversion.sessionSeconds(pts: $0.hostTime, origin: origin)
             )
         }.sorted { $0.seconds < $1.seconds }
@@ -134,9 +149,12 @@ actor MeetingHTMLTranscript {
             let seconds = MeetingLiveTimeConversion.sessionSeconds(pts: image.hostTime, origin: origin)
             let time = Self.elapsedTimeElement(seconds)
             let timeText = MeetingTranscriptExporter.timestampText(seconds)
+            let path = "screenshots/\(image.filename)"
+            let analysis = self.imageAnalyses[image.filename] ?? HTMLText.imageAnalysisMarker(image.filename)
             return (seconds, """
             <li><div class="line">\(time) <strong>Screenshot</strong></div>
-            <figure><a href="\(image.path)"><img src="\(image.path)" alt="Screenshot at \(timeText)"></a></figure></li>
+            <figure><a href="\(path)"><img src="\(path)" alt="Screenshot at \(timeText)"></a></figure>
+            \(analysis)</li>
             """)
         }
         let transcript = rows.sorted { $0.seconds < $1.seconds }.map(\.html).joined(separator: "\n")
@@ -166,6 +184,7 @@ actor MeetingHTMLTranscript {
             .line { font-size: .9rem; }
             .line time { margin-inline-end: .35rem; font-variant-numeric: tabular-nums; }
             .partial { font-style: italic; }
+            \(HTMLText.annotationStyles)
             @media print { body { max-width: none; padding: 0; } li { break-inside: avoid; } }
           </style>
         </head>

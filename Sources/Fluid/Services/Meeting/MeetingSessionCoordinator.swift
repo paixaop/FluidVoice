@@ -2357,7 +2357,8 @@ extension MeetingSessionCoordinator {
         for sessionID: MeetingSessionID,
         capturedAt hostTime: CMTime,
         png: Task<Data, Error>,
-        conversationAtCaptureStart: String? = nil
+        conversationAtCaptureStart: String? = nil,
+        captureLogEntry: CaptureLog.ScreenshotEntry? = nil
     ) -> Bool {
         guard self.screenshotSessionID == sessionID, let transcript = self.meetingHTMLTranscript else { return false }
         let shouldAnalyze = UserDefaults.standard.bool(forKey: CaptureAI.analyzeKey)
@@ -2367,7 +2368,14 @@ extension MeetingSessionCoordinator {
             await previous?.value
             do {
                 if let url = try await transcript.addScreenshot(png.value, capturedAt: hostTime), shouldAnalyze {
-                    CaptureAI.shared.analyzeScreenshot(at: url, meetingID: sessionID, conversation: conversation)
+                    CaptureAI.shared.analyzeScreenshot(at: url, meetingID: sessionID, conversation: conversation) { result in
+                        do {
+                            try await transcript.addImageAnalysis(result, for: url)
+                        } catch {
+                            DebugLogger.shared.warning("Could not add image analysis to the meeting transcript: \(error.localizedDescription)", source: "MeetingSessionCoordinator")
+                        }
+                        await CaptureLog.shared.addImageAnalysis(result, to: captureLogEntry)
+                    }
                 }
             } catch {
                 DebugLogger.shared.warning("Could not add a screenshot to the meeting transcript: \(error.localizedDescription)", source: "MeetingSessionCoordinator")

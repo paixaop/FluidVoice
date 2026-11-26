@@ -21,6 +21,7 @@ final class MeetingHTMLTranscriptTests: XCTestCase {
         )
         let url = directory.appendingPathComponent(MeetingHTMLTranscript.filename)
         try await writer.start(with: .empty)
+        XCTAssertNil(HTMLText.describeTranscript(directory.appendingPathComponent(MeetingHTMLTranscript.filename)), "Active recordings are excluded from the saved-transcript picker")
         XCTAssertTrue(try String(contentsOf: url, encoding: .utf8).contains("Recording"))
 
         let utterance = MeetingLiveUtterance(id: UUID(), speaker: .them, text: "<script>check</script> & notes", start: 12, end: 13)
@@ -104,6 +105,19 @@ final class MeetingHTMLTranscriptTests: XCTestCase {
         try await writer.addScreenshot(png, capturedAt: screenshotTime)
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path).count, 1)
         XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), html)
+
+        try HTMLText.writeSummary("Saved meeting summary", to: url)
+        try await writer.addImageAnalysis("**Chart** shows growth.", for: file)
+        let annotated = try String(contentsOf: url, encoding: .utf8)
+        let analysis = try XCTUnwrap(annotated.range(of: "<summary>Image analysis</summary>"))
+        let screenshot = try XCTUnwrap(annotated.range(of: "<img src=\"screenshots/"))
+        let laterCaption = try XCTUnwrap(annotated.range(of: after.text))
+        XCTAssertLessThan(screenshot.lowerBound, analysis.lowerBound)
+        XCTAssertLessThan(analysis.lowerBound, laterCaption.lowerBound)
+        XCTAssertTrue(annotated.contains("<strong>Chart</strong> shows growth."))
+        XCTAssertTrue(annotated.contains("Saved meeting summary"))
+        XCTAssertNotNil(HTMLText.describeTranscript(url))
+        XCTAssertFalse(try HTMLText.summaryInput(for: url).body.contains("Saved meeting summary"))
     }
 }
 

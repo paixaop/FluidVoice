@@ -252,6 +252,13 @@ actor MeetingSessionStore: MeetingSessionStoring {
         return self.fileSystem.manager.fileExists(atPath: directory.path) ? directory : nil
     }
 
+    func savedHTMLTranscripts() throws -> [HTMLText.Transcript] {
+        guard self.fileSystem.manager.fileExists(atPath: self.rootDirectory.path) else { return [] }
+        return try self.discoverSessionIDs().compactMap { id in
+            HTMLText.describeTranscript(self.sessionDirectoryURL(for: id).appendingPathComponent(MeetingHTMLTranscript.filename))
+        }
+    }
+
     func delete(id: MeetingSessionID) throws {
         self.tombstonedIDs.insert(id)
         let directory = self.sessionDirectoryURL(for: id)

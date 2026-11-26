@@ -66,7 +66,6 @@ final class ScreenshotCapture {
         let mode = settings.screenshotMode
         let savedWindow = settings.screenshotWindow
         let outputApp = settings.activeOutputApp
-        let shouldLog = settings.captureLogEnabled
         let meetingID = meeting?.screenshotSessionID
         do {
             guard CGPreflightScreenCaptureAccess() else { throw CaptureError.permissionRequired }
@@ -109,20 +108,24 @@ final class ScreenshotCapture {
                 frame = try await Self.captureFrame(for: filter)
             }
             let encoding = Task { try await Self.encodePNG(frame.image) }
+            let logEntry = CaptureLog.shared.recordScreenshot(encoding, at: frame.capturedAt)
             var addedToMeeting = false
             if let meetingID {
                 addedToMeeting = meeting?.recordScreenshot(
                     for: meetingID,
                     capturedAt: frame.hostTime,
                     png: encoding,
-                    conversationAtCaptureStart: conversationAtCaptureStart
+                    conversationAtCaptureStart: conversationAtCaptureStart,
+                    captureLogEntry: logEntry
                 ) ?? false
             }
             let png = try await encoding.value
             let url = try await Self.savePNG(png, capturedAt: frame.capturedAt)
-            if !addedToMeeting { CaptureAI.shared.analyzeScreenshot(at: url, meetingID: nil, conversation: "") }
-
-            if shouldLog { CaptureLog.shared.record(.screenshot(png), at: frame.capturedAt) }
+            if !addedToMeeting {
+                CaptureAI.shared.analyzeScreenshot(at: url, meetingID: nil, conversation: "") { result in
+                    await CaptureLog.shared.addImageAnalysis(result, to: logEntry)
+                }
+            }
 
             if let capturedWindow, capturedWindow != savedWindow,
                settings.screenshotMode.needsWindow, settings.screenshotWindow == savedWindow

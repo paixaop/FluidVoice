@@ -1,4 +1,3 @@
-import Darwin
 import Foundation
 
 actor CaptureLogWriter {
@@ -7,10 +6,18 @@ actor CaptureLogWriter {
         case screenshot(Data)
     }
 
+    nonisolated struct EntryLocation {
+        let page: URL
+        let id: String
+    }
+
     nonisolated static let folderName = "FluidVoice Capture Log"
     nonisolated static let pageName = "index.html"
 
     private let folder: URL
+    private var activePageFile: URL {
+        self.folder.appendingPathComponent("active-transcript")
+    }
 
     init(
         folder: URL = FileManager.default.homeDirectoryForCurrentUser
@@ -21,7 +28,8 @@ actor CaptureLogWriter {
     }
 
     func preparePage() throws -> URL {
-        try self.withPageLock { pageURL in
+        try self.withPageLock {
+            let pageURL = try self.activePage()
             if !FileManager.default.fileExists(atPath: pageURL.path) {
                 try Self.emptyPage.write(to: pageURL, atomically: true, encoding: .utf8)
             }
@@ -29,14 +37,35 @@ actor CaptureLogWriter {
         }
     }
 
-    func append(_ entry: Entry, at timestamp: Date) throws {
-        try self.withPageLock { pageURL in
+    func startNewTranscript(at startedAt: Date = .now) throws -> URL {
+        try self.withPageLock {
+            let date = startedAt.formatted(.iso8601).replacingOccurrences(of: ":", with: "-")
+            let name = "transcript-\(date)-\(UUID().uuidString.lowercased()).html"
+            let page = self.folder.appendingPathComponent(name)
+            try Self.emptyPage.write(to: page, atomically: true, encoding: .utf8)
+            do {
+                try name.write(to: self.activePageFile, atomically: true, encoding: .utf8)
+            } catch {
+                try? FileManager.default.removeItem(at: page)
+                throw error
+            }
+            return page
+        }
+    }
+
+    @discardableResult
+    func append(_ entry: Entry, at timestamp: Date) throws -> EntryLocation {
+        try self.withPageLock {
+            let pageURL = try self.activePage()
             let existing = if FileManager.default.fileExists(atPath: pageURL.path) {
                 try String(contentsOf: pageURL, encoding: .utf8)
             } else {
                 Self.emptyPage
             }
-            guard existing.hasPrefix(Self.documentMarker), existing.hasSuffix(Self.pageEnd) else {
+            guard existing.hasPrefix(Self.documentMarker), existing.hasSuffix("</html>"),
+                  let latest = existing.range(of: "<div id=\"latest\"></div>"),
+                  let entriesEnd = existing.range(of: "</ol>", options: .backwards, range: existing.startIndex..<latest.lowerBound)
+            else {
                 throw CocoaError(.fileWriteUnknown, userInfo: [NSLocalizedDescriptionKey: "The capture log HTML has changed. Move it out of the log folder to start a new page."])
             }
 
@@ -57,7 +86,7 @@ actor CaptureLogWriter {
                 try png.write(to: fileURL, options: .atomic)
                 imageURL = fileURL
                 let path = "images/\(filename)"
-                content = "<a href=\"\(path)\"><img src=\"\(path)\" alt=\"Open screenshot at full size\" loading=\"lazy\"></a>"
+                content = "<a href=\"\(path)\"><img src=\"\(path)\" alt=\"Open screenshot at full size\" loading=\"lazy\"></a>\(HTMLText.imageAnalysisMarker(id))"
             }
 
             let isoDate = timestamp.formatted(Date.ISO8601FormatStyle(includingFractionalSeconds: true))
@@ -70,32 +99,59 @@ actor CaptureLogWriter {
                    \(content)
                  </article></li>
             """
-            let body = existing == Self.emptyPage ? Self.pageStart : String(existing.dropLast(Self.pageEnd.count))
-            let updated = body + item + Self.pageEnd
+            var body = String(existing[..<entriesEnd.lowerBound])
+            if body.hasSuffix(Self.emptyEntry) { body.removeLast(Self.emptyEntry.count) }
+            let updated = body + item + existing[entriesEnd.lowerBound...]
             do {
                 try updated.write(to: pageURL, atomically: true, encoding: .utf8)
             } catch {
                 if let imageURL { try? FileManager.default.removeItem(at: imageURL) }
                 throw error
             }
+            return EntryLocation(page: pageURL, id: id)
         }
+    }
+
+    func addImageAnalysis(_ markdown: String, to entry: EntryLocation) throws {
+        try self.withPageLock {
+            guard entry.page.deletingLastPathComponent().standardizedFileURL.path == self.folder.standardizedFileURL.path,
+                  FileManager.default.fileExists(atPath: entry.page.path)
+            else { return }
+            try HTMLText.writeImageAnalysis(markdown, id: entry.id, to: entry.page)
+        }
+    }
+
+    func savedTranscripts() throws -> [HTMLText.Transcript] {
+        guard FileManager.default.fileExists(atPath: self.folder.path) else { return [] }
+        return try FileManager.default.contentsOfDirectory(
+            at: self.folder,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ).compactMap { page in
+            let name = page.lastPathComponent
+            guard name == Self.pageName || (name.hasPrefix("transcript-") && page.pathExtension == "html") else { return nil }
+            return HTMLText.describeTranscript(page)
+        }
+    }
+
+    private func activePage() throws -> URL {
+        guard FileManager.default.fileExists(atPath: self.activePageFile.path) else {
+            return self.folder.appendingPathComponent(Self.pageName)
+        }
+        let name = try String(contentsOf: self.activePageFile, encoding: .utf8)
+        guard name.hasPrefix("transcript-"), name.hasSuffix(".html"), name.utf8.count <= 128,
+              name.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == ".") })
+        else { throw CocoaError(.fileReadCorruptFile) }
+        return self.folder.appendingPathComponent(name)
     }
 
     /// Keep each read–modify–write together when two FluidVoice processes use the same log.
-    private func withPageLock<T>(_ operation: (URL) throws -> T) throws -> T {
+    private func withPageLock<T>(_ operation: () throws -> T) throws -> T {
         try FileManager.default.createDirectory(at: self.folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let lockURL = self.folder.appendingPathComponent(".lock")
-        let descriptor = open(lockURL.path, O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0o600)
-        guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
-        defer { close(descriptor) }
-
-        while flock(descriptor, LOCK_EX) == -1 {
-            guard errno == EINTR else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
-        }
-        return try operation(self.folder.appendingPathComponent(Self.pageName))
+        return try HTMLText.withTranscriptLock(in: self.folder, operation)
     }
 
-    private static let documentMarker = "<!doctype html>\n<!-- FluidVoice Capture Log -->"
+    nonisolated static let documentMarker = "<!doctype html>\n<!-- FluidVoice Capture Log -->"
 
     private static let pageStart = documentMarker + "\n" + """
     <html lang="en">
@@ -118,6 +174,7 @@ actor CaptureLogWriter {
         time, .empty { color: #505a6a; font-size: .9rem; }
         .transcript { max-width: 68ch; margin: .45rem 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
         article img { display: block; max-width: 100%; height: auto; margin-top: .65rem; border: 1px solid #d7dce4; box-sizing: border-box; }
+        \(HTMLText.annotationStyles)
         @media print { body { max-width: none; padding: 0; } header a { display: none; } article img { break-inside: avoid; } }
       </style>
     </head>
@@ -127,7 +184,8 @@ actor CaptureLogWriter {
         <ol role="list" aria-label="Captures">
     """
 
-    private static let emptyPage = pageStart + "<li class=\"empty\">Screenshots and dictation will appear here as you capture them.</li>" + pageEnd
+    private static let emptyEntry = "<li class=\"empty\">Screenshots and dictation will appear here as you capture them.</li>"
+    private static let emptyPage = pageStart + emptyEntry + pageEnd
 
     private static let pageEnd = """
     </ol>
