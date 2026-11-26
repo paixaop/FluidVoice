@@ -1445,16 +1445,33 @@ final class HotkeyShortcutTests: XCTestCase {
     func testScreenshotShortcutRejectsDictationConflictsAndUnmodifiedKeys() {
         self.withIsolatedShortcutConflicts { settings in
             let shortcut = HotkeyShortcut(keyCode: 40, modifierFlags: [.control, .command])
-            let commandOnly = HotkeyShortcut(keyCode: 55, modifierFlags: .command)
-            XCTAssertNotNil(ContentView().shortcutConflictMessage(for: commandOnly, target: .screenshot))
+            let commandOnly = HotkeyShortcut(keyCode: 55, modifierFlags: .command, modifierKeyCodes: [55])
+            XCTAssertNil(ContentView().shortcutConflictMessage(for: commandOnly, target: .screenshot))
+            let letter = HotkeyShortcut(keyCode: 40, modifierFlags: [])
+            XCTAssertNotNil(ContentView().shortcutConflictMessage(for: letter, target: .screenshot))
+            let severalModifiers = HotkeyShortcut(keyCode: 55, modifierFlags: [.command, .option], modifierKeyCodes: [55, 58])
+            XCTAssertNotNil(ContentView().shortcutConflictMessage(for: severalModifiers, target: .screenshot))
 
             settings.primaryDictationShortcuts = [commandOnly]
+            XCTAssertEqual(ContentView().shortcutConflictMessage(for: commandOnly, target: .screenshot), "Duplicate with Primary Dictation Shortcut")
             XCTAssertEqual(ContentView().shortcutConflictMessage(for: shortcut, target: .screenshot), "Overlaps Primary Dictation Shortcut — use a different modifier key")
+
+            settings.primaryDictationShortcuts = [shortcut]
+            XCTAssertNil(ContentView().shortcutConflictMessage(for: commandOnly, target: .screenshot))
+
+            settings.primaryDictationShortcuts = [HotkeyShortcut(keyCode: 54, modifierFlags: .command)]
+            XCTAssertEqual(ContentView().shortcutConflictMessage(for: commandOnly, target: .screenshot), "Overlaps Primary Dictation Shortcut — use a different modifier key")
 
             settings.primaryDictationShortcuts = []
             settings.screenshotHotkeyShortcut = shortcut
             XCTAssertEqual(ContentView().shortcutConflictMessage(for: shortcut, target: .primaryDictation(.add)), "Duplicate with Take Screenshot")
             XCTAssertNil(ContentView().shortcutConflictMessage(for: shortcut, target: .screenshot))
+
+            settings.screenshotHotkeyShortcut = commandOnly
+            XCTAssertEqual(settings.screenshotHotkeyShortcut, commandOnly)
+            XCTAssertNil(ContentView().shortcutConflictMessage(for: shortcut, target: .primaryDictation(.add)))
+            settings.screenshotHotkeyShortcut = severalModifiers
+            XCTAssertNil(settings.screenshotHotkeyShortcut)
         }
     }
 
@@ -2475,6 +2492,95 @@ final class HotkeyShortcutTests: XCTestCase {
     }
 
     @MainActor
+    func testScreenshotModifierTapsFireOnReleaseOnEitherPhysicalSide() throws {
+        let settings = SettingsStore.shared
+        let previous = settings.screenshotHotkeyShortcut
+        defer { settings.screenshotHotkeyShortcut = previous }
+        let families: [(UInt16, UInt16, CGEventFlags)] = [
+            (55, 54, .maskCommand), (58, 61, .maskAlternate), (56, 60, .maskShift), (59, 62, .maskControl),
+        ]
+        var screenshots = 0
+        let manager = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: {})
+        manager.setScreenshotCallback { screenshots += 1 }
+
+        for (left, right, flags) in families {
+            for (selected, other) in [(left, right), (right, left)] {
+                let oldCount = screenshots
+                settings.screenshotHotkeyShortcut = HotkeyShortcut(
+                    keyCode: selected,
+                    modifierFlags: GlobalHotkeyManager.modifierFlags(from: flags),
+                    modifierKeyCodes: [selected]
+                )
+                for keyCode in [other, selected] {
+                    let down = try self.primaryReleaseTestEvent(type: .flagsChanged, keyCode: keyCode, modifiers: flags)
+                    let up = try self.primaryReleaseTestEvent(type: .flagsChanged, keyCode: keyCode, modifiers: [])
+                    XCTAssertNotNil(manager.handleKeyEvent(type: .flagsChanged, event: down))
+                    XCTAssertEqual(screenshots, oldCount)
+                    XCTAssertNotNil(manager.handleKeyEvent(type: .flagsChanged, event: up))
+                    XCTAssertEqual(screenshots, oldCount + (keyCode == selected ? 1 : 0))
+                    XCTAssertNotNil(manager.handleKeyEvent(type: .flagsChanged, event: up))
+                    XCTAssertEqual(screenshots, oldCount + (keyCode == selected ? 1 : 0))
+                }
+            }
+        }
+    }
+
+    @MainActor
+    func testScreenshotModifierTapIgnoresKeyboardCombinationsClicksAndScrolling() throws {
+        let settings = SettingsStore.shared
+        let previous = settings.screenshotHotkeyShortcut
+        defer { settings.screenshotHotkeyShortcut = previous }
+        settings.screenshotHotkeyShortcut = HotkeyShortcut(keyCode: 55, modifierFlags: .command, modifierKeyCodes: [55])
+        var screenshots = 0
+        let manager = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: {})
+        manager.setScreenshotCallback { screenshots += 1 }
+        let down = try self.primaryReleaseTestEvent(type: .flagsChanged, keyCode: 55, modifiers: .maskCommand)
+        let up = try self.primaryReleaseTestEvent(type: .flagsChanged, keyCode: 55, modifiers: [])
+        let key = try self.primaryReleaseTestEvent(type: .keyDown, keyCode: 8, modifiers: .maskCommand)
+        let shiftDown = try self.primaryReleaseTestEvent(type: .flagsChanged, keyCode: 56, modifiers: [.maskCommand, .maskShift])
+        let shiftUp = try self.primaryReleaseTestEvent(type: .flagsChanged, keyCode: 56, modifiers: .maskCommand)
+        let mouseDown = try XCTUnwrap(CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: .zero, mouseButton: .left))
+        let scroll = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: 10, wheel2: 0, wheel3: 0))
+
+        for combo in [[key], [shiftDown, shiftUp], [mouseDown], [scroll]] {
+            XCTAssertNotNil(manager.handleKeyEvent(type: .flagsChanged, event: down))
+            for event in combo {
+                switch event.type {
+                case .leftMouseDown, .scrollWheel: XCTAssertNotNil(manager.handleMouseObserverEvent(type: event.type, event: event))
+                default: XCTAssertNotNil(manager.handleKeyEvent(type: event.type, event: event))
+                }
+            }
+            XCTAssertNotNil(manager.handleKeyEvent(type: .flagsChanged, event: up))
+            XCTAssertEqual(screenshots, 0)
+        }
+        _ = manager.handleKeyEvent(type: .flagsChanged, event: down)
+        _ = manager.handleKeyEvent(type: .flagsChanged, event: up)
+        XCTAssertEqual(screenshots, 1, "A cancelled gesture must leave the next tap available")
+    }
+
+    @MainActor
+    func testScreenshotModifierTapDoesNotFireIfSessionLocksOrShortcutChangesDuringPress() throws {
+        let settings = SettingsStore.shared
+        let previous = settings.screenshotHotkeyShortcut
+        defer { settings.screenshotHotkeyShortcut = previous }
+        let shortcut = HotkeyShortcut(keyCode: 55, modifierFlags: .command)
+        settings.screenshotHotkeyShortcut = shortcut
+        var locked = false
+        let manager = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: {}, isSessionLocked: { locked })
+        manager.setScreenshotCallback { XCTFail("An interrupted press cannot take a screenshot") }
+        let down = try self.primaryReleaseTestEvent(type: .flagsChanged, keyCode: 55, modifiers: .maskCommand)
+        let up = try self.primaryReleaseTestEvent(type: .flagsChanged, keyCode: 55, modifiers: [])
+
+        _ = manager.handleKeyEvent(type: .flagsChanged, event: down)
+        locked = true
+        XCTAssertNotNil(manager.handleKeyEvent(type: .flagsChanged, event: up))
+        locked = false
+        _ = manager.handleKeyEvent(type: .flagsChanged, event: down)
+        settings.screenshotHotkeyShortcut = HotkeyShortcut(keyCode: 54, modifierFlags: .command)
+        XCTAssertNotNil(manager.handleKeyEvent(type: .flagsChanged, event: up))
+    }
+
+    @MainActor
     func testScreenshotShortcutPassesThroughWhenSessionIsLocked() throws {
         let settings = SettingsStore.shared
         let previous = settings.screenshotHotkeyShortcut
@@ -2611,9 +2717,9 @@ final class HotkeyShortcutTests: XCTestCase {
         }
     }
 
-    func testMouseObserverMaskCoversOnlyMouseDowns() {
+    func testMouseObserverMaskCoversMouseDownsAndScrolling() {
         let mask = GlobalHotkeyManager.mouseObserverEventMask()
-        for type in [CGEventType.leftMouseDown, .rightMouseDown, .otherMouseDown] {
+        for type in [CGEventType.leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel] {
             XCTAssertNotEqual(mask & (CGEventMask(1) << type.rawValue), 0, "observer mask must include \(type)")
         }
         for type in [CGEventType.leftMouseUp, .rightMouseUp, .otherMouseUp, .keyDown, .keyUp, .flagsChanged] {

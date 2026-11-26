@@ -3358,12 +3358,12 @@ final class SettingsStore: ObservableObject {
         get {
             guard let data = self.defaults.data(forKey: Keys.screenshotHotkeyShortcut),
                   let shortcut = try? JSONDecoder().decode(HotkeyShortcut.self, from: data),
-                  shortcut.isModifiedKeyboardChord else { return nil }
+                  shortcut.isValidScreenshotShortcut else { return nil }
             return shortcut
         }
         set {
             objectWillChange.send()
-            let data = newValue.flatMap { $0.isModifiedKeyboardChord ? try? JSONEncoder().encode($0) : nil }
+            let data = newValue.flatMap { $0.isValidScreenshotShortcut ? try? JSONEncoder().encode($0) : nil }
             self.defaults.set(data, forKey: Keys.screenshotHotkeyShortcut)
         }
     }

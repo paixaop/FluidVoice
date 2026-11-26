@@ -349,6 +349,29 @@ extension HotkeyShortcut {
         !self.isMouseShortcut && !self.isModifierOnlyShortcut && !self.relevantModifierFlags.isEmpty
     }
 
+    var isScreenshotModifierTap: Bool {
+        guard let flag = self.modifierTriggerFlag, flag != .function else { return false }
+        return self.expectedModifierFlags == flag && self.normalizedModifierKeyCodes.allSatisfy { $0 == self.keyCode }
+    }
+
+    var isValidScreenshotShortcut: Bool {
+        self.isModifiedKeyboardChord || self.isScreenshotModifierTap
+    }
+
+    func matchesScreenshotModifierPress(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> Bool {
+        guard self.isScreenshotModifierTap, self.keyCode == keyCode,
+              modifiers.intersection(Self.relevantModifierMask) == self.expectedModifierFlags
+        else { return false }
+        return Self.modifierSides.allSatisfy { $0.keyCode == keyCode || modifiers.rawValue & $0.mask == 0 }
+    }
+
+    func overlapsScreenshotModifierTap(_ tap: HotkeyShortcut) -> Bool {
+        guard self.isModifierOnlyShortcut, self.expectedModifierFlags == tap.expectedModifierFlags else { return false }
+        let keys = self.normalizedModifierKeyCodes
+        // Flag-only legacy bindings can use either physical side.
+        return keys.isEmpty || keys == [tap.keyCode]
+    }
+
     func matchesRecordingShortcut(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> Bool {
         !self.requiresModifierForRecording && self.matches(keyCode: keyCode, modifiers: modifiers)
     }

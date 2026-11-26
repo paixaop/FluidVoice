@@ -2197,7 +2197,7 @@ extension SettingsView {
                     icon: "camera.viewfinder",
                     iconColor: .secondary,
                     title: "Take Screenshot",
-                    description: "Save a PNG to Pictures/\(ScreenshotCapture.folderName). During a meeting recording, the screenshot also appears in the meeting’s HTML transcript."
+                    description: "Assign a shortcut or tap Command, Option, Shift, or Control alone. Screenshots save to Pictures/\(ScreenshotCapture.folderName) and appear in the active meeting’s HTML transcript."
                 ),
                 shortcut: self.settings.screenshotHotkeyShortcut,
                 isRecording: self.isRecording(.screenshot),

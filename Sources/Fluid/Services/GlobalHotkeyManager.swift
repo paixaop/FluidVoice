@@ -318,6 +318,7 @@ final class GlobalHotkeyManager: NSObject {
     private var meetingShortcutPressedKey: UInt16?
     private var screenshotCallback: (() -> Void)?
     private var screenshotShortcutPressedKey: UInt16?
+    private var pendingScreenshotModifier: HotkeyShortcut?
     private var pasteLastTranscriptionCallback: (() -> Void)?
     private var hotkeyMode: HotkeyActivationMode = SettingsStore.shared.hotkeyMode
     private let automaticTapThresholdSeconds: TimeInterval = 0.4
@@ -850,6 +851,7 @@ final class GlobalHotkeyManager: NSObject {
         (CGEventMask(1) << CGEventType.leftMouseDown.rawValue)
             | (CGEventMask(1) << CGEventType.rightMouseDown.rawValue)
             | (CGEventMask(1) << CGEventType.otherMouseDown.rawValue)
+            | (CGEventMask(1) << CGEventType.scrollWheel.rawValue)
     }
 
     nonisolated static func mouseShortcutEventMask(mouseButtons: Set<Int>) -> CGEventMask {
@@ -1087,7 +1089,8 @@ final class GlobalHotkeyManager: NSObject {
         if !preservePrimaryPress { self.clearPrimaryShortcutPressState(mouseOnly: true) }
     }
 
-    private func handleMouseObserverEvent(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+    func handleMouseObserverEvent(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        self.pendingScreenshotModifier = nil
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             self.reenableMouseTap(self.mouseObserverTap, label: "Mouse observer") { self.setupMouseObserverTap() }
             return Unmanaged.passUnretained(event)
@@ -1097,7 +1100,7 @@ final class GlobalHotkeyManager: NSObject {
             return Unmanaged.passUnretained(event)
         }
 
-        self.markOtherInputDuringModifierOnly()
+        if type != .scrollWheel { self.markOtherInputDuringModifierOnly() }
         return Unmanaged.passUnretained(event)
     }
 
@@ -1125,6 +1128,7 @@ final class GlobalHotkeyManager: NSObject {
 
         switch type {
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            self.pendingScreenshotModifier = nil
             self.markOtherInputDuringModifierOnly()
             if self.handleMouseShortcutDown(event, modifiers: Self.modifierFlags(from: event.flags)) {
                 return nil
@@ -1269,6 +1273,7 @@ final class GlobalHotkeyManager: NSObject {
             return Unmanaged.passUnretained(event)
         }
 
+        self.cancelScreenshotModifierOnKeyEvent(type)
         if self.handleHoldToMute(type: type, event: event, proxy: proxy) {
             return nil
         }
@@ -1582,6 +1587,7 @@ final class GlobalHotkeyManager: NSObject {
                 )
             }
 
+            self.handleScreenshotModifierChange(keyCode: keyCode, modifiers: eventModifiers)
             for shortcut in self.primaryShortcuts where shortcut.isModifierOnlyShortcut {
                 if self.handleModifierOnlyShortcutFlagsChanged(
                     behavior: self.primaryModifierOnlyBehavior(for: shortcut),
@@ -2849,6 +2855,7 @@ extension GlobalHotkeyManager {
     func resetModifierOnlyShortcutTracking(reason: ModifierTrackingResetReason = .shortcutCapture) {
         self.meetingShortcutPressedKey = nil
         self.screenshotShortcutPressedKey = nil
+        self.pendingScreenshotModifier = nil
         self.invalidateAllRecordingActions()
         self.modifierPressReceivedAt = nil
         self.currentStopPressReceivedAt = nil
@@ -2931,6 +2938,7 @@ extension GlobalHotkeyManager {
 
         guard type == .keyDown,
               let shortcut = SettingsStore.shared.screenshotHotkeyShortcut,
+              shortcut.isModifiedKeyboardChord,
               shortcut.matches(keyCode: keyCode, modifiers: modifiers),
               !self.isSessionLockedProvider() else { return false }
         guard !isAutorepeat else { return true }
@@ -2939,5 +2947,31 @@ extension GlobalHotkeyManager {
         self.screenshotShortcutPressedKey = keyCode
         self.screenshotCallback?()
         return true
+    }
+
+    private func cancelScreenshotModifierOnKeyEvent(_ type: CGEventType) {
+        if type == .keyDown || type == .keyUp {
+            self.pendingScreenshotModifier = nil
+        }
+    }
+
+    private func handleScreenshotModifierChange(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) {
+        let shortcut = SettingsStore.shared.screenshotHotkeyShortcut
+        if let pending = self.pendingScreenshotModifier {
+            self.pendingScreenshotModifier = nil
+            if keyCode == pending.keyCode, modifiers.isDisjoint(with: HotkeyShortcut.relevantModifierMask),
+               shortcut == pending, !self.isSessionLockedProvider()
+            {
+                self.screenshotCallback?()
+            }
+            return
+        }
+
+        // Keep the modifier events available to the foreground app. Any other input
+        // clears the pending tap before that input can be claimed by another shortcut.
+        guard let shortcut, shortcut.matchesScreenshotModifierPress(keyCode: keyCode, modifiers: modifiers),
+              self.pressedModifierKeyCodes == [keyCode], !self.isSessionLockedProvider()
+        else { return }
+        self.pendingScreenshotModifier = shortcut
     }
 }

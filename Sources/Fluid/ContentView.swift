@@ -218,6 +218,19 @@ enum ShortcutRecordingTarget: Hashable {
         self == .meeting || self == .screenshot
     }
 
+    func overlaps(_ shortcut: HotkeyShortcut, with configuredShortcut: HotkeyShortcut, assignedTo otherTarget: Self) -> Bool {
+        if self == .screenshot, shortcut.isScreenshotModifierTap {
+            return configuredShortcut.overlapsScreenshotModifierTap(shortcut)
+        }
+        if otherTarget == .screenshot, configuredShortcut.isScreenshotModifierTap {
+            return shortcut.overlapsScreenshotModifierTap(configuredShortcut)
+        }
+        return shortcut.conflictsWith(
+            configuredShortcut,
+            includingKeyboardModifierPrefixes: self.checksKeyboardModifierPrefixes || otherTarget.checksKeyboardModifierPrefixes
+        )
+    }
+
     var isPrimaryDictation: Bool {
         if case .primaryDictation = self { return true }
         return false
@@ -1329,8 +1342,8 @@ struct ContentView: View {
         if target == .meeting, !shortcut.isModifiedKeyboardChord {
             return "Use a keyboard key with a modifier for meeting recording"
         }
-        if target == .screenshot, !shortcut.isModifiedKeyboardChord {
-            return "Use a keyboard key with a modifier for screenshots"
+        if target == .screenshot, !shortcut.isValidScreenshotShortcut {
+            return "Tap Command, Option, Shift, or Control alone, or use a key with a modifier"
         }
         if shortcut.isMouseShortcut {
             guard target.allowsMouseShortcut else {
@@ -1347,7 +1360,7 @@ struct ContentView: View {
             if configuredShortcut.hasSameTrigger(as: shortcut) {
                 return "Duplicate with Primary Dictation Shortcut"
             }
-            if shortcut.conflictsWith(configuredShortcut, includingKeyboardModifierPrefixes: target.checksKeyboardModifierPrefixes) {
+            if target.overlaps(shortcut, with: configuredShortcut, assignedTo: .primaryDictation(.replace(index))) {
                 return "Overlaps Primary Dictation Shortcut — use a different modifier key"
             }
         }
@@ -1375,7 +1388,7 @@ struct ContentView: View {
             if configuredShortcut.hasSameTrigger(as: shortcut) {
                 return "Duplicate with \(otherTarget.title)"
             }
-            if shortcut.conflictsWith(configuredShortcut, includingKeyboardModifierPrefixes: target.checksKeyboardModifierPrefixes || otherTarget.checksKeyboardModifierPrefixes) {
+            if target.overlaps(shortcut, with: configuredShortcut, assignedTo: otherTarget) {
                 return "Overlaps \(otherTarget.title) — use a different modifier key"
             }
         }
@@ -1384,7 +1397,7 @@ struct ContentView: View {
             if configuredShortcut.hasSameTrigger(as: shortcut) {
                 return "Duplicate with \(otherTarget.title)"
             }
-            if shortcut.conflictsWith(configuredShortcut, includingKeyboardModifierPrefixes: target.checksKeyboardModifierPrefixes || otherTarget.checksKeyboardModifierPrefixes) {
+            if target.overlaps(shortcut, with: configuredShortcut, assignedTo: otherTarget) {
                 return "Overlaps \(otherTarget.title) — use a different modifier key"
             }
         }
@@ -1399,7 +1412,7 @@ struct ContentView: View {
             if assignment.shortcut.hasSameTrigger(as: shortcut) {
                 return "Duplicate with Prompt Shortcut"
             }
-            if shortcut.conflictsWith(assignment.shortcut, includingKeyboardModifierPrefixes: target.checksKeyboardModifierPrefixes) {
+            if target.overlaps(shortcut, with: assignment.shortcut, assignedTo: .dictationPrompt(key)) {
                 return "Overlaps Prompt Shortcut — use a different modifier key"
             }
         }
