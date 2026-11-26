@@ -1157,7 +1157,7 @@ final class GlobalHotkeyManager: NSObject {
         sessionInfo["CGSSessionScreenIsLocked"] as? Bool ?? false
     }
 
-    private nonisolated static func currentSessionIsLocked() -> Bool {
+    nonisolated static func currentSessionIsLocked() -> Bool {
         self.sessionIsLocked(sessionInfo: CGSessionCopyCurrentDictionary() as? [String: Any] ?? [:])
     }
 

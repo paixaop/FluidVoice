@@ -5,6 +5,33 @@ import XCTest
 
 @MainActor
 final class PasteDeliveryCoordinatorTests: XCTestCase {
+    func testOutputAppSwitchRequiresASelectionAndRemembersItWhenDisabled() throws {
+        let selection = try JSONDecoder().decode(ConfiguredOutputApp.self, from: Data("""
+        {"bundleIdentifier":"example.output-app","name":"Output Test"}
+        """.utf8))
+        let settings = SettingsStore.shared
+        let oldSelection = settings.outputApp
+        let wasEnabled = settings.outputAppEnabled
+        defer {
+            settings.outputApp = oldSelection
+            settings.outputAppEnabled = wasEnabled
+        }
+
+        settings.outputApp = nil
+        settings.outputAppEnabled = true
+        XCTAssertFalse(settings.outputAppEnabled)
+        XCTAssertNil(settings.activeOutputApp)
+
+        settings.outputApp = selection
+        XCTAssertNil(settings.activeOutputApp)
+        settings.outputAppEnabled = true
+        XCTAssertEqual(settings.activeOutputApp, selection)
+
+        settings.outputAppEnabled = false
+        XCTAssertNil(settings.activeOutputApp)
+        XCTAssertEqual(settings.outputApp, selection)
+    }
+
     func testEachRecoveryFailureGetsANewIdentityEvenForIdenticalText() {
         let state = NotchContentState.shared
         defer { state.clearTextDeliveryFailure() }
@@ -66,6 +93,92 @@ final class PasteDeliveryCoordinatorTests: XCTestCase {
         XCTAssertEqual(next, .commandPosted)
         coordinator.runPendingSettlementForTesting()
         XCTAssertEqual(pasteboard.text, "before")
+    }
+
+    func testConfiguredTranscriptPostsOnlyToThePreparedApp() async {
+        let pasteboard = FakePasteboardManager(text: "before")
+        let poster = FakePasteCommandPoster()
+        let coordinator = PasteDeliveryCoordinator(pasteboard: pasteboard, commandPoster: poster, settlementDelayNanoseconds: .max)
+        let result = await coordinator.deliver("transcript", preserveTranscriptOnClipboard: false, prepareTarget: {
+            .init(pid: 42, isStillFocused: { true })
+        })
+        XCTAssertEqual(result, .commandPosted)
+        XCTAssertEqual(poster.postCount, 1)
+        XCTAssertEqual(poster.postedPIDs, [42])
+        coordinator.runPendingSettlementForTesting()
+        XCTAssertEqual(pasteboard.text, "before")
+    }
+
+    func testConfiguredTranscriptDoesNotFallBackWhenFocusChanges() async {
+        let pasteboard = FakePasteboardManager(text: "before")
+        let poster = FakePasteCommandPoster()
+        let coordinator = PasteDeliveryCoordinator(pasteboard: pasteboard, commandPoster: poster)
+        var isFocused = true
+        pasteboard.onTemporaryWrite = { isFocused = false }
+
+        let result = await coordinator.deliver("transcript", preserveTranscriptOnClipboard: false, prepareTarget: {
+            .init(pid: 42, isStillFocused: { isFocused })
+        })
+        XCTAssertEqual(result, .recoverableFailure(.configuredAppUnavailable))
+        XCTAssertEqual(poster.postCount, 0)
+        XCTAssertEqual(pasteboard.text, "before")
+    }
+
+    func testConfiguredTranscriptDoesNotPasteANewerClipboardCopy() async {
+        let pasteboard = FakePasteboardManager(text: "before")
+        let poster = FakePasteCommandPoster()
+        let coordinator = PasteDeliveryCoordinator(pasteboard: pasteboard, commandPoster: poster)
+
+        let result = await coordinator.deliver("transcript", preserveTranscriptOnClipboard: false, prepareTarget: {
+            .init(pid: 42, isStillFocused: {
+                pasteboard.simulateExternalCopy("new copy")
+                return true
+            })
+        })
+        XCTAssertEqual(result, .recoverableFailure(.clipboardWriteFailed))
+        XCTAssertEqual(poster.postCount, 0)
+        XCTAssertEqual(pasteboard.text, "new copy")
+    }
+
+    func testScreenshotOffersPNGAndFileURLThenRestoresTheClipboard() async {
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.setString("before", forType: .string))
+        let poster = FakePasteCommandPoster()
+        let coordinator = PasteDeliveryCoordinator(pasteboard: SystemPasteboardManager(pasteboard: pasteboard), commandPoster: poster, settlementDelayNanoseconds: 0)
+        let png = Data([137, 80, 78, 71])
+        let url = URL(fileURLWithPath: "/tmp/fluidvoice-test.png")
+        poster.onPost = {
+            XCTAssertEqual(pasteboard.data(forType: .png), png)
+            XCTAssertEqual(pasteboard.string(forType: .fileURL), url.absoluteString)
+        }
+
+        let result = await coordinator.deliverScreenshot(png, fileURL: url, isOutputValid: { true }) {
+            .init(pid: 42, isStillFocused: { true })
+        }
+        XCTAssertEqual(result, .commandPosted)
+        XCTAssertEqual(poster.postedPIDs, [42])
+        XCTAssertEqual(pasteboard.string(forType: .string), "before")
+        XCTAssertNil(pasteboard.data(forType: .png))
+    }
+
+    func testScreenshotDoesNotReplaceANewerClipboardCopy() async {
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        let poster = FakePasteCommandPoster()
+        let coordinator = PasteDeliveryCoordinator(pasteboard: SystemPasteboardManager(pasteboard: pasteboard), commandPoster: poster, settlementDelayNanoseconds: 0)
+        poster.onPost = {
+            pasteboard.clearContents()
+            XCTAssertTrue(pasteboard.setString("new copy", forType: .string))
+        }
+
+        let result = await coordinator.deliverScreenshot(Data([137, 80, 78, 71]), fileURL: URL(fileURLWithPath: "/tmp/fluidvoice-test.png"), isOutputValid: { true }) {
+            .init(pid: 42, isStillFocused: { true })
+        }
+        XCTAssertEqual(result, .commandPosted)
+        XCTAssertEqual(pasteboard.string(forType: .string), "new copy")
     }
 
     func testCancelledQueuedBackupDoesNotWriteAndReleasesSlot() async {
@@ -713,6 +826,7 @@ private final class FakePasteboardManager: PasteboardManaging {
 private final class FakePasteCommandPoster: PasteCommandPosting {
     private let succeeds: Bool
     private(set) var postCount = 0
+    private(set) var postedPIDs: [pid_t] = []
     var onPost: (() -> Void)?
 
     init(succeeds: Bool = true) {
@@ -720,6 +834,13 @@ private final class FakePasteCommandPoster: PasteCommandPosting {
     }
 
     func postGlobalPasteCommand() async -> Bool {
+        self.postCount += 1
+        self.onPost?()
+        return self.succeeds
+    }
+
+    func postPasteCommand(to pid: pid_t) -> Bool {
+        self.postedPIDs.append(pid)
         self.postCount += 1
         self.onPost?()
         return self.succeeds

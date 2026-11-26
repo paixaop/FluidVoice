@@ -166,6 +166,17 @@ final class TypingService {
 
     // MARK: - Focus helpers (shared)
 
+    /// Wait for a physical hotkey chord to finish before synthesizing a paste.
+    static func waitForHotkeyModifiersReleased(timeout: TimeInterval) async -> Bool {
+        let relevant: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate, .maskShift, .maskSecondaryFn]
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
+        while ProcessInfo.processInfo.systemUptime < deadline, !Task.isCancelled {
+            if CGEventSource.flagsState(.combinedSessionState).isDisjoint(with: relevant) { return true }
+            try? await Task.sleep(for: .milliseconds(15))
+        }
+        return false
+    }
+
     /// Best-effort: returns the PID owning the currently focused accessibility element.
     /// This is more reliable than NSWorkspace.frontmostApplication for floating overlays/launchers.
     static func captureSystemFocusTarget() -> CapturedFocusTarget? {
@@ -812,7 +823,7 @@ final class TypingService {
             case .clipboardSnapshotFailed: .clipboardSnapshotFailed
             case .clipboardWriteFailed: .clipboardWriteFailed
             case .pasteCommandFailed: .pasteCommandFailed
-            case .targetUnavailable: .targetUnavailable
+            case .targetUnavailable, .configuredAppUnavailable: .targetUnavailable
             case .targetRestoreFailed: .targetRestoreFailed
             case .noEditableTarget: .noEditableTarget
             case .pasteNotLanded: .pasteNotLanded

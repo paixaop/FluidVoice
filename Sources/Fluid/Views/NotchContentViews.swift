@@ -118,6 +118,7 @@ class NotchContentState: ObservableObject {
     private(set) var textDeliveryFailureID = UUID()
     private(set) var textDeliveryFailureTranscript: String = ""
     private(set) var textDeliveryFailure: TextDeliveryFailure?
+    private(set) var textDeliveryFailureOutputApp: ConfiguredOutputApp?
     @Published var activeDictationShortcutSlot: SettingsStore.DictationShortcutSlot? = nil
     @Published var stopSnapshotLabel: String?
     @Published var promptModeOverrideProfileName: String? = nil // Name shown in overlay when prompt mode hotkey is active
@@ -245,10 +246,11 @@ class NotchContentState: ObservableObject {
         return self.spokenSendCountdownID
     }
 
-    func recordTextDeliveryFailure(_ failure: TextDeliveryFailure, transcript: String) {
+    func recordTextDeliveryFailure(_ failure: TextDeliveryFailure, transcript: String, outputApp: ConfiguredOutputApp? = nil) {
         self.textDeliveryFailureID = UUID()
         self.textDeliveryFailureTranscript = transcript
         self.textDeliveryFailure = failure
+        self.textDeliveryFailureOutputApp = outputApp
         self.textDeliveryFailureMessage = failure.userFacingMessage ?? ""
         self.isTextDeliveryFailureVisible = failure.userFacingMessage != nil
     }
@@ -256,6 +258,7 @@ class NotchContentState: ObservableObject {
     func clearTextDeliveryFailure() {
         self.isTextDeliveryFailureVisible = false
         self.textDeliveryFailure = nil
+        self.textDeliveryFailureOutputApp = nil
     }
 
     @discardableResult
@@ -310,7 +313,7 @@ class NotchContentState: ObservableObject {
     /// Called when the user requests re-pasting the latest saved transcription entry.
     var onPasteLastRequested: (() -> Void)?
     /// Called when the user retries the exact transcript from a delivery failure.
-    var onRetryTextDeliveryRequested: ((String) -> Void)?
+    var onRetryTextDeliveryRequested: ((String, ConfiguredOutputApp?) -> Void)?
     /// Called when the user requests undoing AI processing for the latest entry.
     var onUndoLastAIRequested: (() -> Void)?
     /// Called when the user requests opening Preferences.
@@ -1128,8 +1131,9 @@ struct NotchExpandedView: View {
 
                     Button {
                         let transcript = self.contentState.textDeliveryFailureTranscript
+                        let outputApp = self.contentState.textDeliveryFailureOutputApp
                         self.contentState.clearTextDeliveryFailure()
-                        self.contentState.onRetryTextDeliveryRequested?(transcript)
+                        self.contentState.onRetryTextDeliveryRequested?(transcript, outputApp)
                     } label: {
                         Image(systemName: "arrow.down.doc")
                             .font(.fluidSystem(size: 9, weight: .bold))

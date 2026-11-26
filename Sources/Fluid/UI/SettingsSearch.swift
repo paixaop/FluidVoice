@@ -36,6 +36,7 @@ enum SettingsSearchTarget: Hashable {
     case holdSpaceToMute
     case copyToClipboard
     case textInsertionMode
+    case outputApp
     case spokenSend
     case transcriptionHistory
     case audioHistory
@@ -97,6 +98,7 @@ enum SettingsSearchTarget: Hashable {
              .holdSpaceToMute,
              .copyToClipboard,
              .textInsertionMode,
+             .outputApp,
              .spokenSend,
              .transcriptionHistory,
              .audioHistory,
@@ -206,6 +208,7 @@ struct SettingsSearchAvailability {
              .activationMode,
              .copyToClipboard,
              .textInsertionMode,
+             .outputApp,
              .spokenSend,
              .transcriptionHistory,
              .audioHistory,
@@ -317,6 +320,7 @@ enum SettingsSearchIndex {
             title: "Text Insertion Mode",
             terms: ["type text copy paste clipboard reliable insertion delivery"]
         ),
+        .init(target: .outputApp, title: "Always Paste Into App", terms: ["destination ChatGPT screenshots dictation output app"]),
         .init(
             target: .spokenSend,
             title: "Spoken Send",

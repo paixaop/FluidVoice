@@ -61,6 +61,7 @@ final class ScreenshotCapture {
         let settings = SettingsStore.shared
         let mode = settings.screenshotMode
         let savedWindow = settings.screenshotWindow
+        let outputApp = settings.activeOutputApp
         do {
             guard CGPreflightScreenCaptureAccess() else { throw CaptureError.permissionRequired }
             let capturesWindow = mode == .window
@@ -88,12 +89,18 @@ final class ScreenshotCapture {
             }
 
             let image = try await Self.captureImage(for: filter)
-            try await Self.savePNG(image)
+            let screenshot = try await Self.savePNG(image)
 
             if let capturedWindow, capturedWindow != savedWindow,
                settings.screenshotMode == .window, settings.screenshotWindow == savedWindow
             {
                 settings.screenshotWindow = capturedWindow
+            }
+
+            if let outputApp,
+               case .recoverableFailure = await outputApp.deliverScreenshot(screenshot.png, fileURL: screenshot.url)
+            {
+                self.showPasteFailure(appName: outputApp.name, fileURL: screenshot.url)
             }
         } catch {
             self.showFailure(error)
@@ -140,7 +147,7 @@ final class ScreenshotCapture {
     }
 
     @concurrent
-    private static func savePNG(_ image: CGImage) async throws {
+    private static func savePNG(_ image: CGImage) async throws -> (png: Data, url: URL) {
         let png = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(png, UTType.png.identifier as CFString, 1, nil) else {
             throw CaptureError.imageEncodingFailed
@@ -151,7 +158,21 @@ final class ScreenshotCapture {
         let timestamp = Date.now.formatted(.iso8601).replacingOccurrences(of: ":", with: "-")
         let filename = "Screenshot \(timestamp) \(UUID().uuidString.prefix(8)).png"
         let url = try self.screenshotFolder().appendingPathComponent(filename)
-        try (png as Data).write(to: url, options: .atomic)
+        let data = png as Data
+        try data.write(to: url, options: .atomic)
+        return (data, url)
+    }
+
+    private func showPasteFailure(appName: String, fileURL: URL) {
+        let alert = NSAlert()
+        alert.messageText = "Screenshot Saved"
+        alert.informativeText = "FluidVoice couldn’t paste into \(appName). Focus a field that accepts images and try again, or use the saved PNG."
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Show in Finder")
+        NSApp.activate()
+        if alert.runModal() == .alertSecondButtonReturn {
+            NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+        }
     }
 
     private func showFailure(_ error: Error) {

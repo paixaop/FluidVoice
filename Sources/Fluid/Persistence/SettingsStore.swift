@@ -3389,6 +3389,30 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    var outputApp: ConfiguredOutputApp? {
+        get {
+            guard let data = self.defaults.data(forKey: Keys.outputApp) else { return nil }
+            return try? JSONDecoder().decode(ConfiguredOutputApp.self, from: data)
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue.flatMap { try? JSONEncoder().encode($0) }, forKey: Keys.outputApp)
+            if newValue == nil { self.defaults.removeObject(forKey: Keys.outputAppEnabled) }
+        }
+    }
+
+    var outputAppEnabled: Bool {
+        get { self.defaults.bool(forKey: Keys.outputAppEnabled) && self.outputApp != nil }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue && self.outputApp != nil, forKey: Keys.outputAppEnabled)
+        }
+    }
+
+    var activeOutputApp: ConfiguredOutputApp? {
+        self.defaults.bool(forKey: Keys.outputAppEnabled) ? self.outputApp : nil
+    }
+
     // MARK: - Paste Last Transcription Settings
 
     /// Whether the "Paste Last Transcription" global hotkey is active. Opt-in and off by default.
@@ -6296,6 +6320,8 @@ private extension SettingsStore {
         static let screenshotHotkeyShortcut = "ScreenshotHotkeyShortcut"
         static let screenshotMode = "ScreenshotMode"
         static let screenshotWindow = "ScreenshotWindow"
+        static let outputApp = "OutputApp"
+        static let outputAppEnabled = "OutputAppEnabled"
         static let commandModeLinkedToGlobal = "CommandModeLinkedToGlobal"
         static let commandModeShortcutEnabled = "CommandModeShortcutEnabled"
 

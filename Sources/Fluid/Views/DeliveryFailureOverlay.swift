@@ -14,6 +14,7 @@ final class DeliveryFailureOverlayController {
         case pasteNotLanded
         case pasteUnverified
         case accessibilityNotTrusted
+        case configuredAppUnavailable
         case deliveryFailed
 
         /// Every failure the user can act on maps to a card; only an empty
@@ -23,6 +24,7 @@ final class DeliveryFailureOverlayController {
             case .noEditableTarget: self = .noEditableTarget
             case .pasteNotLanded: self = .pasteNotLanded
             case .accessibilityNotTrusted: self = .accessibilityNotTrusted
+            case .configuredAppUnavailable: self = .configuredAppUnavailable
             case .clipboardSnapshotFailed, .clipboardWriteFailed, .pasteCommandFailed,
                  .targetUnavailable, .targetRestoreFailed: self = .deliveryFailed
             case .emptyText: return nil
@@ -35,6 +37,7 @@ final class DeliveryFailureOverlayController {
             case .pasteNotLanded, .deliveryFailed: "Text wasn't inserted"
             case .pasteUnverified: "Couldn’t verify insertion"
             case .accessibilityNotTrusted: "Enable Accessibility to insert text"
+            case .configuredAppUnavailable: "Focus a text field in your output app"
             }
         }
 

@@ -74,6 +74,7 @@ struct SettingsView: View {
     @State private var rollbackVersionsError: String?
     @State private var audioHistoryBudgetText: String = Self.audioBudgetText(for: SettingsStore.shared.audioHistoryBudgetGB)
     @State private var audioHistoryUsageBytes: Int64 = 0
+    @State private var outputAppPickerError: String?
     @State private var draggedMicrophoneUID: String?
     @State private var hoveredMicrophoneUID: String?
     @State private var searchScrollCoordinator = SettingsSearchScrollCoordinator()
@@ -779,6 +780,10 @@ struct SettingsView: View {
                                             .frame(minWidth: 170, alignment: .trailing)
                                         }
                                         .settingsSearchTarget(.textInsertionMode)
+                                        Divider().opacity(0.2)
+
+                                        self.outputAppSettings
+                                            .settingsSearchTarget(.outputApp)
                                         Divider().opacity(0.2)
 
                                         self.spokenSendSettings
@@ -1958,6 +1963,52 @@ struct SettingsView: View {
         let budget = SettingsStore.shared.audioHistoryBudgetBytes
         guard budget > 0 else { return 0 }
         return min(1, Double(self.audioHistoryUsageBytes) / Double(budget))
+    }
+
+    private var outputAppSettings: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            self.optionToggleRow(
+                title: "Always Paste Into App",
+                description: "Paste screenshots and new dictation transcripts into the chosen app for review before sending.",
+                isOn: self.$settings.outputAppEnabled
+            )
+            .disabled(self.settings.outputApp == nil)
+
+            HStack(spacing: 10) {
+                Button(self.settings.outputApp == nil ? "Choose App…" : "Change App…") {
+                    self.chooseOutputApp()
+                }
+                .fluidOutlinedButton()
+
+                if let app = self.settings.outputApp {
+                    Text(app.name)
+                        .foregroundStyle(self.settingsSecondaryText)
+                        .lineLimit(1)
+                }
+            }
+            .font(self.theme.typography.bodySmall)
+
+            if let error = self.outputAppPickerError {
+                Text(error)
+                    .font(self.theme.typography.bodySmall)
+                    .foregroundStyle(self.theme.palette.warning)
+            }
+        }
+    }
+
+    private func chooseOutputApp() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose Output App"
+        panel.prompt = "Choose App"
+        panel.allowedContentTypes = [.application]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications", isDirectory: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let app = ConfiguredOutputApp(applicationURL: url) else {
+            self.outputAppPickerError = "Choose another installed app."
+            return
+        }
+        self.settings.outputApp = app
+        self.outputAppPickerError = nil
     }
 
     private func optionToggleRow(
