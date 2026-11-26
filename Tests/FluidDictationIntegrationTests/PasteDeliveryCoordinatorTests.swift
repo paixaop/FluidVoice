@@ -140,25 +140,31 @@ final class PasteDeliveryCoordinatorTests: XCTestCase {
         XCTAssertEqual(pasteboard.text, "new copy")
     }
 
-    func testScreenshotOffersPNGAndFileURLThenRestoresTheClipboard() async {
+    func testMultipleScreenshotsOfferTheirOwnPNGAndFileURLThenRestoreTheClipboard() async {
         let pasteboard = NSPasteboard.withUniqueName()
         defer { pasteboard.releaseGlobally() }
         pasteboard.clearContents()
         XCTAssertTrue(pasteboard.setString("before", forType: .string))
         let poster = FakePasteCommandPoster()
         let coordinator = PasteDeliveryCoordinator(pasteboard: SystemPasteboardManager(pasteboard: pasteboard), commandPoster: poster, settlementDelayNanoseconds: 0)
-        let png = Data([137, 80, 78, 71])
-        let url = URL(fileURLWithPath: "/tmp/fluidvoice-test.png")
+        let screenshots = [
+            (Data([137, 80, 78, 71, 1]), URL(fileURLWithPath: "/tmp/fluidvoice-first.png")),
+            (Data([137, 80, 78, 71, 2]), URL(fileURLWithPath: "/tmp/fluidvoice-second.png")),
+        ]
+        var pasted: [(Data?, String?)] = []
         poster.onPost = {
-            XCTAssertEqual(pasteboard.data(forType: .png), png)
-            XCTAssertEqual(pasteboard.string(forType: .fileURL), url.absoluteString)
+            pasted.append((pasteboard.data(forType: .png), pasteboard.string(forType: .fileURL)))
         }
 
-        let result = await coordinator.deliverScreenshot(png, fileURL: url, isOutputValid: { true }) {
-            .init(pid: 42, isStillFocused: { true })
+        for (png, url) in screenshots {
+            let result = await coordinator.deliverScreenshot(png, fileURL: url, isOutputValid: { true }) {
+                .init(pid: 42, isStillFocused: { true })
+            }
+            XCTAssertEqual(result, .commandPosted)
         }
-        XCTAssertEqual(result, .commandPosted)
-        XCTAssertEqual(poster.postedPIDs, [42])
+        XCTAssertEqual(pasted.map(\.0), screenshots.map { $0.0 })
+        XCTAssertEqual(pasted.map(\.1), screenshots.map { $0.1.absoluteString })
+        XCTAssertEqual(poster.postedPIDs, [42, 42])
         XCTAssertEqual(pasteboard.string(forType: .string), "before")
         XCTAssertNil(pasteboard.data(forType: .png))
     }

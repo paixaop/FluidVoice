@@ -20,7 +20,7 @@ struct CaptureAISettings: View {
 
             self.option(
                 "Analyze Screenshots",
-                help: "Send each screenshot and available meeting captions through capture time to OpenAI. Show the result in a floating panel.",
+                help: "Send each screenshot and available transcript text through capture time to OpenAI. Show the result in a floating panel.",
                 isOn: self.$analyzesScreenshots
             )
             self.option(

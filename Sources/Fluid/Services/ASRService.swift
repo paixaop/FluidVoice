@@ -630,6 +630,7 @@ final class ASRService: ObservableObject {
 
     @Published var finalText: String = ""
     @Published var partialTranscription: String = ""
+    private(set) var captureTranscript: DictationCaptureTranscript?
     @Published var wordBoostStatusText: String = "Word boost: off"
     @Published var micStatus: AVAuthorizationStatus = .notDetermined
     @Published var isAsrReady: Bool = false
@@ -3190,9 +3191,9 @@ final class ASRService: ObservableObject {
                 DebugLogger.shared.debug("ℹ️ No device to monitor", source: "ASRService")
             }
 
-            // Only start streaming for models that support it (large Whisper models are too slow)
+            // Opt-in capture logging also needs previews from models that normally run only at stop.
             let model = SettingsStore.shared.selectedSpeechModel
-            if model.supportsStreaming, !forDictionaryTraining {
+            if !forDictionaryTraining, model.supportsStreaming || self.captureTranscript != nil {
                 DebugLogger.shared.debug("📡 Starting streaming transcription...", source: "ASRService")
                 self.benchmarkLog("streaming_timer_start intervalMs=\(Int((self.streamingChunkDurationSeconds * 1000).rounded())) minSamples=\(self.minimumStreamingPreviewSamples)")
                 self.startStreamingTranscription()
@@ -3516,7 +3517,8 @@ final class ASRService: ObservableObject {
         forDictionaryTraining: Bool = false,
         captureDictionaryPronunciation: Bool? = nil,
         forDictionaryTesting: Bool = false,
-        onInitialDictionaryReplacement: (@MainActor (DictionaryReplacementRule) -> Void)? = nil
+        onInitialDictionaryReplacement: (@MainActor (DictionaryReplacementRule) -> Void)? = nil,
+        finalizesCaptureTranscript: Bool = false
     ) async -> String {
         guard !forDictionaryTesting || self.isDictionaryTrainingCaptureActive else { return "" }
         DebugLogger.shared.info("🛑 STOP() called - beginning shutdown sequence", source: "ASRService")
@@ -3557,6 +3559,9 @@ final class ASRService: ObservableObject {
             DebugLogger.shared.warning("STOP() ignored - recording buffer handoff already active", source: "ASRService")
             return ""
         }
+        let captureTranscript = self.captureTranscript
+        self.captureTranscript = nil
+        if !finalizesCaptureTranscript { captureTranscript?.discardPreview() }
         self.mediaPlaybackService.recordingStopped(sessionID: stoppingSessionID)
         defer { self.mediaPlaybackService.sessionFinished(sessionID: stoppingSessionID) }
         self.isStoppingFinalTranscription = true
@@ -3666,9 +3671,13 @@ final class ASRService: ObservableObject {
 
         // NOW it's safe to access the buffer - all pending tasks have completed
         // Thread-safe copy of recorded audio
+        _ = await captureTranscript?.latestCheckpoint?.value
         var pcm = self.audioBuffer.getAll()
         self.audioBuffer.clear()
         let capturedPCM = pcm
+        if let captureTranscript, captureTranscript.hasScreenshots {
+            await self.finishCaptureTranscriptTail(captureTranscript, pcm: capturedPCM, saveTail: finalizesCaptureTranscript)
+        }
         traceStop("buffer_copied")
         let hasRecognizedStreamingPreview = !self.partialTranscription
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -4448,6 +4457,9 @@ final class ASRService: ObservableObject {
         }
         let stoppingSessionID = self.benchmarkSessionID
         guard let bufferHandoffToken = self.recordingBufferHandoffGate.begin() else { return }
+        let captureTranscript = self.captureTranscript
+        self.captureTranscript = nil
+        captureTranscript?.discardPreview()
         self.mediaPlaybackService.recordingStopped(sessionID: stoppingSessionID)
         defer { self.mediaPlaybackService.sessionFinished(sessionID: stoppingSessionID) }
         var completedBufferHandoff = false
@@ -4495,6 +4507,11 @@ final class ASRService: ObservableObject {
             self.beginStreamingDrainRecovery(sessionID: stoppingSessionID, token: bufferHandoffToken)
             completedBufferHandoff = true
             return
+        }
+
+        _ = await captureTranscript?.latestCheckpoint?.value
+        if captureTranscript?.hasScreenshots == true {
+            await self.transcriptionProvider.resetDictationStreamingState()
         }
 
         // NOW it's safe to clear the buffer
@@ -7032,10 +7049,87 @@ final class ASRService: ObservableObject {
 
     // MARK: - Timer-based Streaming Transcription (No VAD)
 
+    func beginCaptureTranscript() {
+        guard SettingsStore.shared.captureLogEnabled, self.isRunning, self.captureTranscript == nil else { return }
+        self.captureTranscript = DictationCaptureTranscript()
+        self.audioBuffer.startTrackingHostTime()
+        if !self.isAsrReady {
+            Task { try? await self.ensureAsrReady() }
+        }
+    }
+
+    func captureScreenshotCheckpoint(
+        for transcript: DictationCaptureTranscript,
+        at timestamp: Date,
+        hostTime: UInt64,
+        png: Task<Data, Error>
+    ) -> (entry: CaptureLog.ScreenshotEntry, transcript: Task<DictationCaptureTranscript.Finalized, Never>)? {
+        guard self.isRunning, self.captureTranscript === transcript,
+              SettingsStore.shared.captureLogEnabled
+        else { return nil }
+        let sessionID = self.benchmarkSessionID
+        let buffer = self.audioBuffer
+        let isMuted = self.isDictationMuted
+        let cutoff = Task {
+            if !isMuted { await buffer.waitForPacket(throughHostTime: hostTime) }
+            return buffer.count(throughHostTime: hostTime)
+        }
+        let activePreview = self.streamingTaskLifecycle.activeTaskToDrain(sessionID: sessionID)
+        let checkpoint = transcript.checkpoint {
+            await activePreview?.value
+            let start = transcript.segmentStart
+            guard self.benchmarkSessionID == sessionID, !self.recordingBufferHandoffGate.isRecovering else { return (start, nil) }
+            let end = max(start, await cutoff.value)
+            let pcm = buffer.getRange(startingAt: start, count: end - start)
+            return (end, await self.transcribeCaptureSpan(pcm))
+        }
+        let screenshot = CaptureLog.shared.recordScreenshot(png, at: timestamp, after: checkpoint)
+        transcript.startNextSegment(at: timestamp)
+        return (screenshot, checkpoint.result)
+    }
+
+    private func finishCaptureTranscriptTail(_ transcript: DictationCaptureTranscript, pcm: [Float], saveTail: Bool) async {
+        if saveTail {
+            let samples = Array(pcm.dropFirst(transcript.segmentStart))
+            transcript.finishTail(with: await self.transcribeCaptureSpan(samples))
+        } else if self.transcriptionProvider.isReady {
+            await self.transcriptionProvider.resetDictationStreamingState()
+        }
+    }
+
+    private func transcribeCaptureSpan(_ audio: [Float]) async -> String? {
+        do {
+            if !self.isAsrReady { try await self.ensureAsrReady() }
+            guard self.transcriptionProvider.isReady else { return nil }
+            let shouldSkip = audio.isEmpty || (
+                SettingsStore.shared.skipSilentRecordingsEnabled && Self.assessShortAudioSilence(audio).shouldSkipTranscription
+            )
+            // The next pass starts at a different sample offset, even when this span is empty.
+            let result = try await self.transcriptionExecutor.run { [provider = self.transcriptionProvider] in
+                await provider.resetDictationStreamingState()
+                guard !shouldSkip else { return "" }
+                let pcm = audio + Array(repeating: 0, count: max(0, 16_000 - audio.count))
+                do {
+                    let result = try await provider.transcribeFinal(pcm)
+                    await provider.resetDictationStreamingState()
+                    return result.text
+                } catch {
+                    await provider.resetDictationStreamingState()
+                    throw error
+                }
+            }
+            return Self.applySpokenPunctuationFormatting(Self.applyCustomDictionary(Self.removeFillerWords(result)))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        } catch {
+            DebugLogger.shared.warning("Capture transcript span failed: \(error.localizedDescription)", source: "ASRService")
+            return nil
+        }
+    }
+
     private func startStreamingTranscription() {
         self.streamingSchedulingSessionID = nil
         _ = self.streamingTaskLifecycle.cancelScheduler()
-        guard self.isAsrReady else { return }
+        guard self.isAsrReady || self.captureTranscript != nil else { return }
         self.streamingSchedulingSessionID = self.benchmarkSessionID
 
         DebugLogger.shared.debug(
@@ -7118,7 +7212,9 @@ final class ASRService: ObservableObject {
                   operationID: operationID
               )
         else { return }
-        guard !self.isDictationMuted else { return }
+        let captureTranscript = self.captureTranscript
+        guard !self.isDictationMuted, (captureTranscript?.pendingCheckpoints ?? 0) == 0 else { return }
+        let segmentStart = captureTranscript?.segmentStart ?? 0
         self.benchmarkStreamingChunkIndex += 1
         let chunkIndex = self.benchmarkStreamingChunkIndex
         let chunkAgeMs = self.elapsedMilliseconds(since: self.benchmarkRecordingStartedAt)
@@ -7144,7 +7240,7 @@ final class ASRService: ObservableObject {
         }
 
         // Thread-safe count check
-        let currentSampleCount = self.audioBuffer.count
+        let currentSampleCount = self.audioBuffer.count - segmentStart
         // Most ASR models require at least 1 second of 16kHz audio (16,000 samples) to transcribe
         let minSamples = self.minimumStreamingPreviewSamples
         guard currentSampleCount >= minSamples else {
@@ -7172,11 +7268,11 @@ final class ASRService: ObservableObject {
         let chunk: [Float]
         if let incrementalDeltaStart {
             chunk = self.audioBuffer.getRange(
-                startingAt: incrementalDeltaStart,
+                startingAt: segmentStart + incrementalDeltaStart,
                 count: currentSampleCount - incrementalDeltaStart
             )
         } else {
-            chunk = self.audioBuffer.getPrefix(currentSampleCount)
+            chunk = self.audioBuffer.getRange(startingAt: segmentStart, count: currentSampleCount)
         }
 
         // Validate chunk is not empty (defensive check)
@@ -7232,7 +7328,7 @@ final class ASRService: ObservableObject {
                         "Incremental delta preview failed; retrying with the full prefix",
                         source: "ASRService"
                     )
-                    let fullPrefix = self.audioBuffer.getPrefix(currentSampleCount)
+                    let fullPrefix = self.audioBuffer.getRange(startingAt: segmentStart, count: currentSampleCount)
                     result = try await self.transcriptionExecutor.run { [provider = self.transcriptionProvider] in
                         let result = try await provider.transcribeStreaming(fullPrefix)
                         logStreamingProviderOperationReturn(
@@ -7305,10 +7401,18 @@ final class ASRService: ObservableObject {
             }
 
             if !newText.isEmpty {
+                if let captureTranscript {
+                    guard self.captureTranscript === captureTranscript, captureTranscript.segmentStart == segmentStart,
+                          captureTranscript.pendingCheckpoints == 0 else { return }
+                    if SettingsStore.shared.captureLogEnabled {
+                        captureTranscript.publishPreview(newText, from: segmentStart, through: segmentStart + currentSampleCount)
+                    }
+                }
                 // Smart diff: only show truly new words
-                let updatedText = self.smartDiffUpdate(previous: self.previousFullTranscription, current: newText)
+                let fullText = DictationCaptureTranscript.join(captureTranscript?.conversation ?? "", newText)
+                let updatedText = self.smartDiffUpdate(previous: self.previousFullTranscription, current: fullText)
                 self.partialTranscription = updatedText
-                self.previousFullTranscription = newText
+                self.previousFullTranscription = fullText
 
                 DebugLogger.shared.debug("✅ Streaming: '\(updatedText)' (\(String(format: "%.2f", duration))s)", source: "ASRService")
             }
@@ -8144,7 +8248,11 @@ final nonisolated class AudioCapturePipeline: @unchecked Sendable {
         // Keep append and first-audio attribution inside the capture lock.
         // Disabling an attempt therefore returns only after every accepted
         // callback has committed its PCM and queued its attempt-scoped signal.
-        self.audioBuffer.append(mono16k)
+        self.audioBuffer.append(
+            mono16k,
+            startHostTime: Self.hostTime(inputHostTime, advancedByFrames: acceptedRange.lowerBound, sampleRate: sampleRate),
+            endHostTime: Self.hostTime(inputHostTime, advancedByFrames: acceptedRange.upperBound, sampleRate: sampleRate)
+        )
         if shouldReportFirstAudio {
             let acceptedHostTime = Self.hostTime(
                 inputHostTime,

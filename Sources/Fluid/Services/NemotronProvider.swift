@@ -220,6 +220,14 @@ final class NemotronProvider: TranscriptionProvider {
         try await self.transcribeFinal(samples)
     }
 
+    func resetDictationStreamingState() async {
+        if let manager = self.manager {
+            await self.stopComponentProfilingIfNeeded(on: manager)
+            await manager.reset()
+        }
+        self.streamedSampleCount = 0
+    }
+
     func transcribeStreaming(_ samples: [Float]) async throws -> ASRTranscriptionResult {
         guard self.mode != .offline else {
             return try await self.transcribeFinal(samples)

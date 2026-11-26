@@ -3203,6 +3203,8 @@ struct ContentView: View {
         let wasCommandMode = modeAtStop == .command || self.isRecordingForCommand
         let outputApp = route.deliversText && !wasRewriteMode && !wasCommandMode ? self.settings.activeOutputApp : nil
         let shouldLog = route.deliversText && self.settings.captureLogEnabled
+        let captureTranscript = self.asr.captureTranscript
+        defer { captureTranscript?.discardPreview() }
         let activeDictationSlot = self.currentDictationShortcutSlot(for: modeAtStop)
         let autoSendAtStop = self.activeDictationAutoSend && activeDictationSlot != nil && outputApp == nil
         let promptOverride = self.promptModeOverrideText
@@ -3240,7 +3242,8 @@ struct ContentView: View {
                 TranscriptionSoundPlayer.shared.playStopSound()
             },
             onFinalTranscriptionStarted: stopOverlay.onFinalTranscriptionStarted,
-            onInitialDictionaryReplacement: { initialDictionaryRule = $0 }
+            onInitialDictionaryReplacement: { initialDictionaryRule = $0 },
+            finalizesCaptureTranscript: shouldLog && !wasRewriteMode && !wasCommandMode
         )
         self.appBench("asr_stop_return elapsedMs=\(Int(((ProcessInfo.processInfo.systemUptime - asrStopStartedAt) * 1000).rounded()))")
         self.completeDictationStopSnapshot(&stopSnapshot)
@@ -3506,7 +3509,11 @@ struct ContentView: View {
         let shouldPersistOutputs = outputRoute.savesHistory
         let shouldDeliverOutputs = outputRoute.deliversText
         if shouldLog, shouldDeliverOutputs, !sendsExistingDraft, !finalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            CaptureLog.shared.record(.transcript(finalText))
+            if let captureTranscript {
+                if !captureTranscript.hasScreenshots { captureTranscript.finish(with: finalText) }
+            } else {
+                CaptureLog.shared.record(.transcript(finalText))
+            }
         }
         if !shouldPersistOutputs {
             DebugLogger.shared.info(
@@ -4735,16 +4742,10 @@ struct ContentView: View {
             self.clearActiveDictationShortcutState()
         }
         self.activeRecordingMode = mode
-        switch mode {
-        case .none, .dictate, .promptMode:
-            self.isRecordingForCommand = false
-            self.isRecordingForRewrite = false
-        case .edit:
-            self.isRecordingForCommand = false
-            self.isRecordingForRewrite = true
-        case .command:
-            self.isRecordingForCommand = true
-            self.isRecordingForRewrite = false
+        self.isRecordingForCommand = mode == .command
+        self.isRecordingForRewrite = mode == .edit
+        if mode != .none {
+            self.asr.captureTranscript?.setSuspended(mode == .command || mode == .edit)
         }
     }
 
@@ -4852,6 +4853,12 @@ struct ContentView: View {
         DebugLogger.shared.info("Command processed, conversation stored in Command Mode", source: "ContentView")
     }
 
+    private func beginCaptureTranscriptIfEligible() {
+        guard !DictationPromptTestCoordinator.shared.isActive, !self.showsFluidIntelligenceDemo,
+              self.currentDictationOutputRouteForHotkeyStop().deliversText else { return }
+        self.asr.beginCaptureTranscript()
+    }
+
     /// Capture app context at start to avoid mismatches if the user switches apps mid-session
     private func startRecording(autoSend: Bool = false) -> Task<Void, Never>? {
         guard !self.isSavingCancelledRecording, self.processingDictationLifecycleID == nil else { return nil }
@@ -4900,6 +4907,7 @@ struct ContentView: View {
                     TranscriptionSoundPlayer.shared.playStartSound()
                 }
                 self.captureRecordingContext()
+                self.beginCaptureTranscriptIfEligible()
                 self.startDictationContextCaptureIfNeeded(for: .primary)
                 self.prewarmPrivateAIDictationIfNeeded(for: .primary)
                 DebugLogger.shared.benchmark(
@@ -5356,7 +5364,8 @@ struct ContentView: View {
             self.pasteLastDictationFromHistory()
         }
         self.hotkeyManager?.setScreenshotCallback {
-            Task { await ScreenshotCapture.shared.captureFromShortcut(meeting: self.appServices.meetingScreenshotDestination) }
+            let dictation = self.activeRecordingMode == .dictate || self.activeRecordingMode == .promptMode ? self.asr : nil
+            ScreenshotCapture.shared.captureFromShortcut(meeting: self.appServices.meetingScreenshotDestination, dictation: dictation)
         }
         self.hotkeyManager?.setNewCaptureTranscriptCallback {
             CaptureLog.shared.startNewTranscript()
@@ -5739,6 +5748,7 @@ extension ContentView {
                     TranscriptionSoundPlayer.shared.playStartSound()
                 }
                 self.captureRecordingContext()
+                self.beginCaptureTranscriptIfEligible()
                 self.startDictationContextCaptureIfNeeded(for: slot)
                 self.prewarmPrivateAIDictationIfNeeded(for: slot)
                 self.appBench("overlay_phase phase=recording trigger=first_pcm")

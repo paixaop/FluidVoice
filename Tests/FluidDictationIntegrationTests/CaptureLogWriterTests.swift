@@ -87,6 +87,98 @@ final class CaptureLogWriterTests: XCTestCase {
         XCTAssertFalse(currentHTML.contains("<summary>Image analysis</summary>"))
     }
 
+    func testLiveDictationStaysBetweenScreenshotsWhenTextAndAnalysesArriveLate() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let writer = CaptureLogWriter(folder: folder)
+        let time = Date.now
+        let png = Data([137, 80, 78, 71])
+        let opening = try await writer.append(.liveDictation, at: time)
+        try await writer.writeDictation("Opening preview", to: opening, at: time)
+        XCTAssertTrue(try String(contentsOf: opening.page, encoding: .utf8).contains("Opening preview"))
+        let first = try await writer.append(.screenshot(png), at: time.addingTimeInterval(1))
+        let middle = try await writer.append(.liveDictation, at: time.addingTimeInterval(1))
+        let second = try await writer.append(.screenshot(png), at: time.addingTimeInterval(2))
+        let closing = try await writer.append(.liveDictation, at: time.addingTimeInterval(2))
+
+        try await writer.addImageAnalysis("**Second image result**", to: second)
+        try await writer.writeDictation("Closing speech", to: closing, at: time.addingTimeInterval(2))
+        try await writer.writeDictation("Opening & final", to: opening, at: time)
+        try await writer.addImageAnalysis("**First image result**", to: first)
+        try await writer.writeDictation("Middle speech", to: middle, at: time.addingTimeInterval(1))
+
+        let html = try String(contentsOf: opening.page, encoding: .utf8)
+        let timeline = [
+            "Opening &amp; final",
+            "images/\(first.id).png",
+            "<strong>First image result</strong>",
+            "Middle speech",
+            "images/\(second.id).png",
+            "<strong>Second image result</strong>",
+            "Closing speech",
+        ]
+        let positions = try timeline.map { try XCTUnwrap(html.range(of: $0)).lowerBound }
+        XCTAssertEqual(positions, positions.sorted())
+        XCTAssertEqual(html.components(separatedBy: "<summary>Image analysis</summary>").count, 3)
+        XCTAssertFalse(html.contains("Opening preview"))
+
+        try await writer.writeDictation("", to: closing, at: time.addingTimeInterval(2))
+        let cancelled = try String(contentsOf: opening.page, encoding: .utf8)
+        XCTAssertFalse(cancelled.contains("Closing speech"))
+        XCTAssertTrue(cancelled.contains("Second image result"))
+    }
+
+    func testTwoPendingScreenshotsFinalizeInOrderAndUseOnlyEarlierSpeechForAnalysis() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let writer = CaptureLogWriter(folder: folder)
+        let log = CaptureLog(writer: writer)
+        let transcript = DictationCaptureTranscript(log: log)
+        let time = Date.now
+        let png = Task<Data, Error> { Data([137, 80, 78, 71]) }
+
+        let first = transcript.checkpoint { (16_000, "First segment") }
+        let firstScreenshot = log.recordScreenshot(png, at: time, after: first)
+        transcript.startNextSegment(at: time)
+        let second = transcript.checkpoint { (32_000, "Second segment") }
+        let secondScreenshot = log.recordScreenshot(png, at: time.addingTimeInterval(1), after: second)
+        transcript.startNextSegment(at: time.addingTimeInterval(1))
+        XCTAssertEqual(transcript.pendingCheckpoints, 2)
+
+        let firstContext = await first.result.value.conversation
+        let secondContext = await second.result.value.conversation
+        XCTAssertEqual(firstContext, "First segment")
+        XCTAssertEqual(secondContext, "First segment\n\nSecond segment")
+        XCTAssertEqual(transcript.segmentStart, 32_000)
+
+        transcript.publishPreview("Stale preview", from: 16_000, through: 36_000)
+        transcript.finishTail(with: "Final segment")
+        await log.addImageAnalysis("Analysis for second", to: secondScreenshot)
+        await log.addImageAnalysis("Analysis for first", to: firstScreenshot)
+        await log.finishPendingWrites()
+
+        let page = try await writer.preparePage()
+        let html = try String(contentsOf: page, encoding: .utf8)
+        let timeline = ["First segment", "Analysis for first", "Second segment", "Analysis for second", "Final segment"]
+        let positions = try timeline.map { try XCTUnwrap(html.range(of: $0)).lowerBound }
+        XCTAssertEqual(positions, positions.sorted())
+        XCTAssertFalse(html.contains("Stale preview"))
+    }
+
+    func testAudioBufferFindsScreenCaptureInsidePacketOrBetweenPackets() {
+        let buffer = ThreadSafeAudioBuffer()
+        buffer.startTrackingHostTime()
+        buffer.append([0, 1, 2, 3], startHostTime: 100, endHostTime: 140)
+        buffer.append([4, 5, 6, 7], startHostTime: 150, endHostTime: 190)
+
+        XCTAssertEqual(buffer.count(throughHostTime: 120), 2)
+        XCTAssertEqual(buffer.count(throughHostTime: 145), 4)
+        XCTAssertEqual(buffer.count(throughHostTime: 180), 7)
+        XCTAssertEqual(buffer.count(throughHostTime: 195), 8)
+        buffer.clear()
+        XCTAssertEqual(buffer.count(throughHostTime: 120), 0)
+    }
+
     func testSummaryInputExcludesPreviousSummaryAndKeepsCapturesAndAnalysis() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }

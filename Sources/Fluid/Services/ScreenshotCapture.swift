@@ -8,7 +8,8 @@ import UniformTypeIdentifiers
 final class ScreenshotCapture {
     static let shared = ScreenshotCapture()
 
-    private var isCapturing = false
+    private var pendingCapture: Task<Void, Never>?
+    private var pendingPaste: Task<Void, Never>?
 
     private init() {}
 
@@ -57,16 +58,41 @@ final class ScreenshotCapture {
         }
     }
 
-    func captureFromShortcut(meeting: MeetingSessionCoordinator?) async {
-        guard !self.isCapturing else { return }
-        self.isCapturing = true
-        defer { self.isCapturing = false }
-
+    func captureFromShortcut(meeting: MeetingSessionCoordinator?, dictation: ASRService?) {
         let settings = SettingsStore.shared
         let mode = settings.screenshotMode
         let savedWindow = settings.screenshotWindow
         let outputApp = settings.activeOutputApp
         let meetingID = meeting?.screenshotSessionID
+        let transcript = dictation?.captureTranscript
+        let previous = self.pendingCapture
+        self.pendingCapture = Task {
+            await previous?.value
+            await self.capture(
+                mode: mode,
+                savedWindow: savedWindow,
+                outputApp: outputApp,
+                meeting: meeting,
+                meetingID: meetingID,
+                dictation: dictation,
+                transcript: transcript
+            )
+        }
+    }
+
+    private func capture(
+        mode: ScreenshotMode,
+        savedWindow: ScreenshotWindow?,
+        outputApp: ConfiguredOutputApp?,
+        meeting: MeetingSessionCoordinator?,
+        meetingID: UUID?,
+        dictation: ASRService?,
+        transcript: DictationCaptureTranscript?
+    ) async {
+        let settings = SettingsStore.shared
+        // A scrolling capture may drive wheel events in the selected app.
+        // Finish any previous paste before moving focus or scrolling.
+        if mode == .scrollingWindow { await self.pendingPaste?.value }
         do {
             guard CGPreflightScreenCaptureAccess() else { throw CaptureError.permissionRequired }
             let capturesWindow = mode.needsWindow
@@ -96,34 +122,55 @@ final class ScreenshotCapture {
                 if mode == .scrollingWindow { scrollWindow = window }
             }
 
-            let frame: (image: CGImage, hostTime: CMTime, capturedAt: Date)
+            let hostTime: CMTime
+            let capturedAt: Date
+            let encoding: Task<Data, Error>
             let conversationAtCaptureStart: String?
             if let scrollWindow {
-                let time = CMClockGetTime(CMClockGetHostTimeClock())
-                let date = Date.now
-                conversationAtCaptureStart = meeting?.screenshotConversation(at: time)
-                frame = try (await ScrollingScreenshot.capture(window: scrollWindow, filter: filter), time, date)
+                hostTime = CMClockGetTime(CMClockGetHostTimeClock())
+                capturedAt = .now
+                conversationAtCaptureStart = meeting?.screenshotConversation(at: hostTime)
+                encoding = Task {
+                    try await Self.encodePNG(ScrollingScreenshot.capture(window: scrollWindow, filter: filter))
+                }
             } else {
                 conversationAtCaptureStart = nil
-                frame = try await Self.captureFrame(for: filter)
+                let frame = try await Self.captureFrame(for: filter)
+                hostTime = frame.hostTime
+                capturedAt = frame.capturedAt
+                encoding = Task { try await Self.encodePNG(frame.image) }
             }
-            let encoding = Task { try await Self.encodePNG(frame.image) }
-            let logEntry = CaptureLog.shared.recordScreenshot(encoding, at: frame.capturedAt)
+            let checkpoint = transcript.flatMap {
+                dictation?.captureScreenshotCheckpoint(
+                    for: $0, at: capturedAt, hostTime: CMClockConvertHostTimeToSystemUnits(hostTime), png: encoding
+                )
+            }
+            let logEntry: CaptureLog.ScreenshotEntry?
+            if let checkpoint {
+                logEntry = checkpoint.entry
+            } else if settings.captureLogEnabled {
+                logEntry = CaptureLog.shared.recordScreenshot(encoding, at: capturedAt)
+            } else {
+                logEntry = nil
+            }
             var addedToMeeting = false
             if let meetingID {
                 addedToMeeting = meeting?.recordScreenshot(
                     for: meetingID,
-                    capturedAt: frame.hostTime,
+                    capturedAt: hostTime,
                     png: encoding,
                     conversationAtCaptureStart: conversationAtCaptureStart,
                     captureLogEntry: logEntry
                 ) ?? false
             }
             let png = try await encoding.value
-            let url = try await Self.savePNG(png, capturedAt: frame.capturedAt)
+            let url = try await Self.savePNG(png, capturedAt: capturedAt)
             if !addedToMeeting {
-                CaptureAI.shared.analyzeScreenshot(at: url, meetingID: nil, conversation: "") { result in
-                    await CaptureLog.shared.addImageAnalysis(result, to: logEntry)
+                Task {
+                    let conversation = await checkpoint?.transcript.value.conversation ?? ""
+                    CaptureAI.shared.analyzeScreenshot(at: url, meetingID: nil, conversation: conversation) { result in
+                        await CaptureLog.shared.addImageAnalysis(result, to: logEntry)
+                    }
                 }
             }
 
@@ -133,10 +180,14 @@ final class ScreenshotCapture {
                 settings.screenshotWindow = capturedWindow
             }
 
-            if let outputApp,
-               case .recoverableFailure = await outputApp.deliverScreenshot(png, fileURL: url)
-            {
-                self.showPasteFailure(appName: outputApp.name, fileURL: url)
+            if let outputApp {
+                let previous = self.pendingPaste
+                self.pendingPaste = Task {
+                    await previous?.value
+                    if case .recoverableFailure = await outputApp.deliverScreenshot(png, fileURL: url) {
+                        self.showPasteFailure(appName: outputApp.name, fileURL: url)
+                    }
+                }
             }
         } catch {
             self.showFailure(error)

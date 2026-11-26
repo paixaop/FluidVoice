@@ -722,6 +722,10 @@ final class FluidAudioProvider: TranscriptionProvider {
         self.resetIncrementalSession()
     }
 
+    func resetDictationStreamingState() async {
+        self.resetStreamingPreviewCache()
+    }
+
     func transcribeStreaming(_ samples: [Float]) async throws -> ASRTranscriptionResult {
         guard let fullPreviewManager = self.streamingAsrManager else {
             throw NSError(

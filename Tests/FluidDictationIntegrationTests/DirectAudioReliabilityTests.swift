@@ -943,7 +943,7 @@ final class DirectAudioReliabilityTests: XCTestCase {
         XCTAssertTrue(pipeline.contains("if shouldPersistOutputs, !sendsExistingDraft, SettingsStore.shared.saveTranscriptionHistory"))
         XCTAssertTrue(pipeline.contains("let shouldCopyToClipboard = shouldDeliverOutputs"))
         XCTAssertTrue(pipeline.contains("let shouldTypeExternally = shouldDeliverOutputs"))
-        XCTAssertTrue(pipeline.contains("if isFluidFrontmost, shouldDeliverOutputs"))
+        XCTAssertTrue(pipeline.contains("if isFluidFrontmost, outputApp == nil, shouldDeliverOutputs"))
         XCTAssertTrue(pipeline.contains("if outputRoute.publishesEditorResult"))
         XCTAssertTrue(pipeline.contains("shouldPersistOutputs: shouldDeliverOutputs"), "Recovery must not offer a retry that later pastes")
         XCTAssertTrue(pipeline.contains("if wasRewriteMode {"))

@@ -102,7 +102,11 @@ final class CaptureAI: ObservableObject {
                     parts: [.text("Transcript through screenshot capture:\n\(captionContext)"), .image(url)],
                     maxTokens: 1800
                 )
-                try result.write(to: Self.analysisFile(for: url), atomically: true, encoding: .utf8)
+                do {
+                    try result.write(to: Self.analysisFile(for: url), atomically: true, encoding: .utf8)
+                } catch {
+                    DebugLogger.shared.warning("Couldn’t save screenshot analysis: \(error.localizedDescription)", source: "CaptureAI")
+                }
                 self.updatePreview(id: id, text: result)
                 await onResult(result)
             } catch {
