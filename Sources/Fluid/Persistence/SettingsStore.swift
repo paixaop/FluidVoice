@@ -3368,6 +3368,21 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    var newCaptureTranscriptHotkeyShortcut: HotkeyShortcut? {
+        get {
+            guard let data = self.defaults.data(forKey: Keys.newCaptureTranscriptHotkeyShortcut),
+                  let shortcut = try? JSONDecoder().decode(HotkeyShortcut.self, from: data),
+                  shortcut.isModifiedKeyboardChord
+            else { return nil }
+            return shortcut
+        }
+        set {
+            self.objectWillChange.send()
+            let data = newValue.flatMap { $0.isModifiedKeyboardChord ? try? JSONEncoder().encode($0) : nil }
+            self.defaults.set(data, forKey: Keys.newCaptureTranscriptHotkeyShortcut)
+        }
+    }
+
     var screenshotMode: ScreenshotMode {
         get {
             self.defaults.string(forKey: Keys.screenshotMode).flatMap(ScreenshotMode.init(rawValue:)) ?? .fullScreen
@@ -6326,6 +6341,7 @@ private extension SettingsStore {
         static let pasteLastTranscriptionHotkeyShortcut = "PasteLastTranscriptionHotkeyShortcut"
         static let pasteLastTranscriptionShortcutEnabled = "PasteLastTranscriptionShortcutEnabled"
         static let screenshotHotkeyShortcut = "ScreenshotHotkeyShortcut"
+        static let newCaptureTranscriptHotkeyShortcut = "NewCaptureTranscriptHotkeyShortcut"
         static let screenshotMode = "ScreenshotMode"
         static let screenshotWindow = "ScreenshotWindow"
         static let outputApp = "OutputApp"

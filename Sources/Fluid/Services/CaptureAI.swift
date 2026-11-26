@@ -78,7 +78,12 @@ final class CaptureAI: ObservableObject {
 
     private init() {}
 
-    func analyzeScreenshot(at url: URL, meetingID: UUID?, conversation: String) {
+    func analyzeScreenshot(
+        at url: URL,
+        meetingID: UUID?,
+        conversation: String,
+        onResult: @escaping @MainActor (String) async -> Void
+    ) {
         let path = url.standardizedFileURL.path
         guard UserDefaults.standard.bool(forKey: Self.analyzeKey), self.jobs[path] == nil else { return }
         let id = UUID()
@@ -99,6 +104,7 @@ final class CaptureAI: ObservableObject {
                 )
                 try result.write(to: Self.analysisFile(for: url), atomically: true, encoding: .utf8)
                 self.updatePreview(id: id, text: result)
+                await onResult(result)
             } catch {
                 self.updatePreview(id: id, text: Self.failureText(error))
             }
@@ -161,6 +167,17 @@ final class CaptureAI: ObservableObject {
                 self.summaryStatus = "Meeting summary failed. \(Self.failureText(error))"
             }
         }
+    }
+
+    func summarizeTranscript(at page: URL) async throws -> String {
+        let parts = try await Self.transcriptParts(at: page)
+        return try await Self.ask(prompt: .summary, parts: parts, maxTokens: 4500)
+    }
+
+    @concurrent
+    private static func transcriptParts(at page: URL) async throws -> [Part] {
+        let transcript = try HTMLText.summaryInput(for: page)
+        return [.text("Transcript (HTML):\n\(transcript.body)")] + transcript.images.map(Part.image)
     }
 
     private func showPanel() {

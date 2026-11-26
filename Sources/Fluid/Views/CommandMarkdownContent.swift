@@ -3,7 +3,7 @@ import Foundation
 import SwiftUI
 
 /// A small block parser keeps completed replies unchanged while a streaming reply updates.
-struct CommandMarkdownBlock: Identifiable, Equatable {
+nonisolated struct CommandMarkdownBlock: Identifiable, Equatable {
     let id: Int
     let content: Content
 
@@ -18,7 +18,7 @@ struct CommandMarkdownBlock: Identifiable, Equatable {
     }
 }
 
-enum CommandMarkdownParser {
+nonisolated enum CommandMarkdownParser {
     static func parse(_ text: String) -> [CommandMarkdownBlock] {
         let normalized = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
         let lines = normalized.components(separatedBy: "\n")

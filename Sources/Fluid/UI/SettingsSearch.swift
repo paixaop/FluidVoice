@@ -39,6 +39,7 @@ enum SettingsSearchTarget: Hashable {
     case textInsertionMode
     case outputApp
     case captureLog
+    case newCaptureTranscriptShortcut
     case captureAI
     case spokenSend
     case transcriptionHistory
@@ -120,7 +121,7 @@ enum SettingsSearchTarget: Hashable {
              .pasteLastTranscriptionShortcut, .meetingRecordingShortcut:
             return .shortcuts
 
-        case .capture, .screenshotShortcut, .outputApp, .captureLog, .captureAI:
+        case .capture, .screenshotShortcut, .outputApp, .captureLog, .newCaptureTranscriptShortcut, .captureAI:
             return .capture
 
         case .notifications, .aiEnhancementFailures, .microphoneChanges, .pasteCheck:
@@ -327,6 +328,7 @@ enum SettingsSearchIndex {
         ),
         .init(target: .outputApp, title: "Always Paste Into App", terms: ["destination ChatGPT screenshots dictation output app"]),
         .init(target: .captureLog, title: "Keep an HTML Capture Log", terms: ["screenshots dictation transcript HTML timeline export"]),
+        .init(target: .newCaptureTranscriptShortcut, title: "New Capture Transcript", terms: ["start new capture transcript", "capture log keyboard shortcut HTML new page"]),
         .init(target: .captureAI, title: "Screenshot and Meeting Analysis", terms: ["OpenAI ChatGPT OAuth image prompt edit summary prompt"]),
         .init(
             target: .spokenSend,

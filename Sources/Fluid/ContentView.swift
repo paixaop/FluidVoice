@@ -163,6 +163,7 @@ enum ShortcutRecordingTarget: Hashable {
     case pasteLast
     case meeting
     case screenshot
+    case newCaptureTranscript
     case dictationPrompt(String)
     case newPrompt
 
@@ -184,6 +185,8 @@ enum ShortcutRecordingTarget: Hashable {
             return "Paste Last Transcription"
         case .screenshot:
             return "Take Screenshot"
+        case .newCaptureTranscript:
+            return "Start New Capture Transcript"
         case .dictationPrompt:
             return "Prompt Shortcut"
         case .newPrompt:
@@ -195,7 +198,7 @@ enum ShortcutRecordingTarget: Hashable {
         switch self {
         case .secondaryDictation, .command, .edit, .pasteLast:
             return true
-        case .primaryDictation, .cancel, .meeting, .screenshot, .dictationPrompt, .newPrompt:
+        case .primaryDictation, .cancel, .meeting, .screenshot, .newCaptureTranscript, .dictationPrompt, .newPrompt:
             return false
         }
     }
@@ -209,13 +212,13 @@ enum ShortcutRecordingTarget: Hashable {
         switch self {
         case .primaryDictation, .pasteLast:
             return true
-        case .secondaryDictation, .command, .edit, .cancel, .meeting, .screenshot, .dictationPrompt, .newPrompt:
+        case .secondaryDictation, .command, .edit, .cancel, .meeting, .screenshot, .newCaptureTranscript, .dictationPrompt, .newPrompt:
             return false
         }
     }
 
     var checksKeyboardModifierPrefixes: Bool {
-        self == .meeting || self == .screenshot
+        self == .meeting || self == .screenshot || self == .newCaptureTranscript
     }
 
     func overlaps(_ shortcut: HotkeyShortcut, with configuredShortcut: HotkeyShortcut, assignedTo otherTarget: Self) -> Bool {
@@ -1345,6 +1348,9 @@ struct ContentView: View {
         if target == .screenshot, !shortcut.isValidScreenshotShortcut {
             return "Tap Command, Option, Shift, or Control alone, or use a key with a modifier"
         }
+        if target == .newCaptureTranscript, !shortcut.isModifiedKeyboardChord {
+            return "Use a keyboard key with a modifier to start a new capture transcript"
+        }
         if shortcut.isMouseShortcut {
             guard target.allowsMouseShortcut else {
                 return "Mouse clicks can only be assigned to Primary Dictation or Paste Last Transcription"
@@ -1381,6 +1387,7 @@ struct ContentView: View {
         let optionalConfiguredShortcuts: [(ShortcutRecordingTarget, HotkeyShortcut?)] = [
             (.meeting, SettingsStore.shared.meetingRecordingHotkeyShortcut),
             (.screenshot, SettingsStore.shared.screenshotHotkeyShortcut),
+            (.newCaptureTranscript, SettingsStore.shared.newCaptureTranscriptHotkeyShortcut),
             (.cancel, self.cancelRecordingHotkeyShortcut),
         ]
 
@@ -1448,6 +1455,8 @@ struct ContentView: View {
             SettingsStore.shared.meetingRecordingHotkeyShortcut = shortcut
         case .screenshot:
             SettingsStore.shared.screenshotHotkeyShortcut = shortcut
+        case .newCaptureTranscript:
+            SettingsStore.shared.newCaptureTranscriptHotkeyShortcut = shortcut
         case .cancel:
             self.cancelRecordingHotkeyShortcut = shortcut
             SettingsStore.shared.cancelRecordingHotkeyShortcut = shortcut
@@ -1502,7 +1511,7 @@ struct ContentView: View {
         case .pasteLast:
             self.isPasteLastTranscriptionShortcutEnabled = enabled
             SettingsStore.shared.pasteLastTranscriptionShortcutEnabled = enabled
-        case .primaryDictation, .cancel, .meeting, .screenshot, .dictationPrompt, .newPrompt:
+        case .primaryDictation, .cancel, .meeting, .screenshot, .newCaptureTranscript, .dictationPrompt, .newPrompt:
             break
         }
     }
@@ -5348,6 +5357,9 @@ struct ContentView: View {
         }
         self.hotkeyManager?.setScreenshotCallback {
             Task { await ScreenshotCapture.shared.captureFromShortcut(meeting: self.appServices.meetingScreenshotDestination) }
+        }
+        self.hotkeyManager?.setNewCaptureTranscriptCallback {
+            CaptureLog.shared.startNewTranscript()
         }
 
         // Monitor initialization status

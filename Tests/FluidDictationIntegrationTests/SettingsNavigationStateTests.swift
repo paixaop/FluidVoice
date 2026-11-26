@@ -206,6 +206,7 @@ final class SettingsNavigationStateTests: XCTestCase {
 
     func testSettingsSearchMatchesPrefixesAliasesAndMultipleWords() {
         XCTAssertEqual(SettingsSearchIndex.results(for: "start").first?.target, .launchAtStartup)
+        XCTAssertEqual(SettingsSearchIndex.results(for: "Start New Capture Transcript").first?.target, .newCaptureTranscriptShortcut)
         XCTAssertEqual(SettingsSearchIndex.results(for: "meeting shortcut").first?.target, .meetingRecordingShortcut)
         XCTAssertTrue(SettingsSearchIndex.results(for: "mic").contains { $0.target == .inputDevicePriority })
         XCTAssertEqual(SettingsSearchIndex.results(for: "audio device").first?.section, .audio)

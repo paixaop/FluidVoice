@@ -40,6 +40,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
     // Cached menu items to avoid rebuilding entire menu
     private var statusMenuItem: NSMenuItem?
     private var copyLastTranscriptMenuItem: NSMenuItem?
+    private var summarizeTranscriptMenuItem: NSMenuItem?
     private var rollbackMenuItem: NSMenuItem?
     private var microphoneMenuItem: NSMenuItem?
     private var microphoneSubmenu: NSMenu?
@@ -1025,6 +1026,15 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         menu.addItem(copyLastTranscriptItem)
         self.copyLastTranscriptMenuItem = copyLastTranscriptItem
 
+        let newCaptureTranscriptItem = NSMenuItem(title: "Start New Capture Transcript", action: #selector(startNewCaptureTranscript), keyEquivalent: "")
+        newCaptureTranscriptItem.target = self
+        menu.addItem(newCaptureTranscriptItem)
+
+        let summarizeTranscriptItem = NSMenuItem(title: "Summarize Transcript…", action: #selector(summarizeTranscript), keyEquivalent: "")
+        summarizeTranscriptItem.target = self
+        menu.addItem(summarizeTranscriptItem)
+        self.summarizeTranscriptMenuItem = summarizeTranscriptItem
+
         menu.addItem(.separator())
 
         // Open Main Window
@@ -1121,6 +1131,7 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
         }
         self.statusMenuItem?.title = statusTitle
         self.copyLastTranscriptMenuItem?.isEnabled = self.canCopyLastTranscript
+        self.summarizeTranscriptMenuItem?.isEnabled = !CaptureLog.shared.isSummarizing
         self.microphoneMenuItem?.isEnabled = true
 
         // Update rollback availability text
@@ -1294,6 +1305,14 @@ final class MenuBarManager: NSObject, ObservableObject, NSMenuDelegate {
             recordingItem.isEnabled = false
             submenu.addItem(recordingItem)
         }
+    }
+
+    @objc private func startNewCaptureTranscript() {
+        CaptureLog.shared.startNewTranscript()
+    }
+
+    @objc private func summarizeTranscript() {
+        CaptureLog.shared.summarizeSavedTranscript()
     }
 
     private var canCopyLastTranscript: Bool {
