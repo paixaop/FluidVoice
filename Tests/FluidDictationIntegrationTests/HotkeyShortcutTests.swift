@@ -1442,6 +1442,23 @@ final class HotkeyShortcutTests: XCTestCase {
     }
 
     @MainActor
+    func testScreenshotShortcutRejectsDictationConflictsAndUnmodifiedKeys() {
+        self.withIsolatedShortcutConflicts { settings in
+            let shortcut = HotkeyShortcut(keyCode: 40, modifierFlags: [.control, .command])
+            let commandOnly = HotkeyShortcut(keyCode: 55, modifierFlags: .command)
+            XCTAssertNotNil(ContentView().shortcutConflictMessage(for: commandOnly, target: .screenshot))
+
+            settings.primaryDictationShortcuts = [commandOnly]
+            XCTAssertEqual(ContentView().shortcutConflictMessage(for: shortcut, target: .screenshot), "Overlaps Primary Dictation Shortcut — use a different modifier key")
+
+            settings.primaryDictationShortcuts = []
+            settings.screenshotHotkeyShortcut = shortcut
+            XCTAssertEqual(ContentView().shortcutConflictMessage(for: shortcut, target: .primaryDictation(.add)), "Duplicate with Take Screenshot")
+            XCTAssertNil(ContentView().shortcutConflictMessage(for: shortcut, target: .screenshot))
+        }
+    }
+
+    @MainActor
     func testEditAndSmartShortcutsAreReservedOnlyWhileEnabled() {
         self.withIsolatedShortcutConflicts { settings in
             let edit = HotkeyShortcut(keyCode: 40, modifierFlags: [.control, .command])
@@ -1518,7 +1535,7 @@ final class HotkeyShortcutTests: XCTestCase {
             self.primaryDictationShortcutsKey, self.legacyHotkeyShortcutKey,
             "DictationPromptConfigurations", "PromptModeHotkeyShortcut", "PromptModeShortcutEnabled",
             "CommandModeHotkeyShortcut", "CommandModeShortcutEnabled", "RewriteModeHotkeyShortcut", "RewriteModeShortcutEnabled",
-            "CancelRecordingHotkeyShortcut", "MeetingRecordingHotkeyShortcut",
+            "CancelRecordingHotkeyShortcut", "MeetingRecordingHotkeyShortcut", "ScreenshotHotkeyShortcut",
             self.pasteLastTranscriptionShortcutKey, self.pasteLastTranscriptionEnabledKey,
         ]
         self.withRestoredDefaults(keys: keys) {
@@ -2431,6 +2448,43 @@ final class HotkeyShortcutTests: XCTestCase {
         let event = try self.primaryReleaseTestEvent(type: .keyDown, keyCode: 53, modifiers: [])
         let result = manager.handleKeyEvent(type: .keyDown, event: event)
         withExtendedLifetime(event) { XCTAssertNotNil(result) }
+    }
+
+    @MainActor
+    func testScreenshotShortcutFiresOnceAndConsumesItsRelease() throws {
+        let settings = SettingsStore.shared
+        let previous = settings.screenshotHotkeyShortcut
+        defer { settings.screenshotHotkeyShortcut = previous }
+        let keyCode: CGKeyCode = 1
+        settings.screenshotHotkeyShortcut = HotkeyShortcut(keyCode: keyCode, modifierFlags: [.control, .command])
+        var screenshots = 0
+        let manager = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: {})
+        manager.setScreenshotCallback { screenshots += 1 }
+
+        let down = try self.primaryReleaseTestEvent(type: .keyDown, keyCode: keyCode)
+        XCTAssertNil(manager.handleKeyEvent(type: .keyDown, event: down))
+        let repeatDown = try self.primaryReleaseTestEvent(type: .keyDown, keyCode: keyCode, modifiers: [])
+        repeatDown.setIntegerValueField(.keyboardEventAutorepeat, value: 1)
+        XCTAssertNil(manager.handleKeyEvent(type: .keyDown, event: repeatDown))
+        let up = try self.primaryReleaseTestEvent(type: .keyUp, keyCode: keyCode, modifiers: [])
+        XCTAssertNil(manager.handleKeyEvent(type: .keyUp, event: up))
+        XCTAssertEqual(screenshots, 1)
+
+        XCTAssertNil(manager.handleKeyEvent(type: .keyDown, event: down))
+        XCTAssertEqual(screenshots, 2)
+    }
+
+    @MainActor
+    func testScreenshotShortcutPassesThroughWhenSessionIsLocked() throws {
+        let settings = SettingsStore.shared
+        let previous = settings.screenshotHotkeyShortcut
+        defer { settings.screenshotHotkeyShortcut = previous }
+        let keyCode: CGKeyCode = 1
+        settings.screenshotHotkeyShortcut = HotkeyShortcut(keyCode: keyCode, modifierFlags: [.control, .command])
+        let manager = self.makePrimaryReleaseTestManager(asr: ASRService(), onStart: {}, isSessionLocked: { true })
+        manager.setScreenshotCallback { XCTFail("A locked session cannot take a screenshot") }
+        let down = try self.primaryReleaseTestEvent(type: .keyDown, keyCode: keyCode)
+        XCTAssertNotNil(manager.handleKeyEvent(type: .keyDown, event: down))
     }
 
     @MainActor

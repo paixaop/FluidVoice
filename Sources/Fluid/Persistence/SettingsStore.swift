@@ -3339,18 +3339,85 @@ final class SettingsStore: ObservableObject {
         get {
             guard let data = self.defaults.data(forKey: Keys.meetingRecordingHotkeyShortcut),
                   let shortcut = try? JSONDecoder().decode(HotkeyShortcut.self, from: data),
-                  shortcut.isMeetingRecordingShortcut else { return nil }
+                  shortcut.isModifiedKeyboardChord else { return nil }
             return shortcut
         }
         set {
             objectWillChange.send()
-            guard let newValue, newValue.isMeetingRecordingShortcut,
+            guard let newValue, newValue.isModifiedKeyboardChord,
                   let data = try? JSONEncoder().encode(newValue)
             else {
                 self.defaults.removeObject(forKey: Keys.meetingRecordingHotkeyShortcut)
                 return
             }
             self.defaults.set(data, forKey: Keys.meetingRecordingHotkeyShortcut)
+        }
+    }
+
+    var screenshotHotkeyShortcut: HotkeyShortcut? {
+        get {
+            guard let data = self.defaults.data(forKey: Keys.screenshotHotkeyShortcut),
+                  let shortcut = try? JSONDecoder().decode(HotkeyShortcut.self, from: data),
+                  shortcut.isModifiedKeyboardChord else { return nil }
+            return shortcut
+        }
+        set {
+            objectWillChange.send()
+            let data = newValue.flatMap { $0.isModifiedKeyboardChord ? try? JSONEncoder().encode($0) : nil }
+            self.defaults.set(data, forKey: Keys.screenshotHotkeyShortcut)
+        }
+    }
+
+    var screenshotMode: ScreenshotMode {
+        get {
+            self.defaults.string(forKey: Keys.screenshotMode).flatMap(ScreenshotMode.init(rawValue:)) ?? .fullScreen
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue.rawValue, forKey: Keys.screenshotMode)
+        }
+    }
+
+    var screenshotWindow: ScreenshotWindow? {
+        get {
+            guard let data = self.defaults.data(forKey: Keys.screenshotWindow) else { return nil }
+            return try? JSONDecoder().decode(ScreenshotWindow.self, from: data)
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue.flatMap { try? JSONEncoder().encode($0) }, forKey: Keys.screenshotWindow)
+        }
+    }
+
+    var outputApp: ConfiguredOutputApp? {
+        get {
+            guard let data = self.defaults.data(forKey: Keys.outputApp) else { return nil }
+            return try? JSONDecoder().decode(ConfiguredOutputApp.self, from: data)
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue.flatMap { try? JSONEncoder().encode($0) }, forKey: Keys.outputApp)
+            if newValue == nil { self.defaults.removeObject(forKey: Keys.outputAppEnabled) }
+        }
+    }
+
+    var outputAppEnabled: Bool {
+        get { self.defaults.bool(forKey: Keys.outputAppEnabled) && self.outputApp != nil }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue && self.outputApp != nil, forKey: Keys.outputAppEnabled)
+        }
+    }
+
+    var activeOutputApp: ConfiguredOutputApp? {
+        self.defaults.bool(forKey: Keys.outputAppEnabled) ? self.outputApp : nil
+    }
+
+    var captureLogEnabled: Bool {
+        get { self.defaults.bool(forKey: Keys.captureLogEnabled) }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue, forKey: Keys.captureLogEnabled)
         }
     }
 
@@ -6258,6 +6325,12 @@ private extension SettingsStore {
         static let cancelRecordingHotkeyShortcut = "CancelRecordingHotkeyShortcut"
         static let pasteLastTranscriptionHotkeyShortcut = "PasteLastTranscriptionHotkeyShortcut"
         static let pasteLastTranscriptionShortcutEnabled = "PasteLastTranscriptionShortcutEnabled"
+        static let screenshotHotkeyShortcut = "ScreenshotHotkeyShortcut"
+        static let screenshotMode = "ScreenshotMode"
+        static let screenshotWindow = "ScreenshotWindow"
+        static let outputApp = "OutputApp"
+        static let outputAppEnabled = "OutputAppEnabled"
+        static let captureLogEnabled = "CaptureLogEnabled"
         static let commandModeLinkedToGlobal = "CommandModeLinkedToGlobal"
         static let commandModeShortcutEnabled = "CommandModeShortcutEnabled"
 

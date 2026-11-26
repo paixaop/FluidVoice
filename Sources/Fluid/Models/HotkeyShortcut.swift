@@ -283,8 +283,7 @@ extension HotkeyShortcut {
 
     /// True when shortcut presses can race because one begins as the other's modifier prefix.
     func conflictsWith(_ other: HotkeyShortcut, includingKeyboardModifierPrefixes: Bool = false) -> Bool {
-        // Meeting chords cannot wait for a modifier-only dictation shortcut to disambiguate:
-        // that shortcut must keep starting capture immediately.
+        // One-shot chords can conflict with a dictation shortcut that starts on its modifier prefix.
         if includingKeyboardModifierPrefixes {
             let modifierOnly = self.isModifierOnlyShortcut ? self : other
             let keyed = self.isModifierOnlyShortcut ? other : self
@@ -346,8 +345,7 @@ extension HotkeyShortcut {
         }
     }
 
-    /// Meeting recording is a one-shot toggle, independent of dictation activation mode.
-    var isMeetingRecordingShortcut: Bool {
+    var isModifiedKeyboardChord: Bool {
         !self.isMouseShortcut && !self.isModifierOnlyShortcut && !self.relevantModifierFlags.isEmpty
     }
 

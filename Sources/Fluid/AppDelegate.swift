@@ -25,6 +25,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
                 DebugLogger.shared.error("Restart cancelled: history could not be saved", source: "AppDelegate")
                 return
             }
+            await CaptureLog.shared.finishPendingWrites()
             UserDefaults.standard.synchronize()
             await PrivateAIIntegrationService.shared.shutdownForTermination()
             await AppServices.shared.shutdownForTermination()
@@ -138,6 +139,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         if Self.restartPrepared { return .terminateNow }
         Task { @MainActor in
             await TranscriptionHistoryStore.shared.finishPendingWrites()
+            await CaptureLog.shared.finishPendingWrites()
             if let error = TranscriptionHistoryStore.shared.persistenceError {
                 let alert = NSAlert()
                 alert.messageText = "History could not be saved"

@@ -31,10 +31,13 @@ enum SettingsSearchTarget: Hashable {
     case cancelRecordingShortcut
     case pasteLastTranscriptionShortcut
     case meetingRecordingShortcut
+    case screenshotShortcut
     case activationMode
     case holdSpaceToMute
     case copyToClipboard
     case textInsertionMode
+    case outputApp
+    case captureLog
     case spokenSend
     case transcriptionHistory
     case audioHistory
@@ -96,6 +99,8 @@ enum SettingsSearchTarget: Hashable {
              .holdSpaceToMute,
              .copyToClipboard,
              .textInsertionMode,
+             .outputApp,
+             .captureLog,
              .spokenSend,
              .transcriptionHistory,
              .audioHistory,
@@ -112,7 +117,7 @@ enum SettingsSearchTarget: Hashable {
 
         case .shortcuts, .globalHotkey, .primaryDictationShortcuts,
              .commandModeShortcut, .editModeShortcut, .cancelRecordingShortcut,
-             .pasteLastTranscriptionShortcut, .meetingRecordingShortcut:
+             .pasteLastTranscriptionShortcut, .meetingRecordingShortcut, .screenshotShortcut:
             return .shortcuts
 
         case .notifications, .aiEnhancementFailures, .microphoneChanges, .pasteCheck:
@@ -201,9 +206,12 @@ struct SettingsSearchAvailability {
              .cancelRecordingShortcut,
              .pasteLastTranscriptionShortcut,
              .meetingRecordingShortcut,
+             .screenshotShortcut,
              .activationMode,
              .copyToClipboard,
              .textInsertionMode,
+             .outputApp,
+             .captureLog,
              .spokenSend,
              .transcriptionHistory,
              .audioHistory,
@@ -302,6 +310,7 @@ enum SettingsSearchIndex {
             terms: ["reinsert recent text hotkey shortcut clipboard"]
         ),
         .init(target: .meetingRecordingShortcut, title: "Meeting Recording Shortcut", terms: ["FluidMeet start stop toggle recording keyboard hotkey"]),
+        .init(target: .screenshotShortcut, title: "Take Screenshot", terms: ["screen capture window display keyboard hotkey PNG"]),
         .init(target: .activationMode, title: "Activation Mode", terms: ["hold toggle hotkey behavior"]),
         .init(target: .holdSpaceToMute, title: "Hold Space to Mute", terms: ["pause microphone spacebar resume silence"]),
         .init(
@@ -314,6 +323,8 @@ enum SettingsSearchIndex {
             title: "Text Insertion Mode",
             terms: ["type text copy paste clipboard reliable insertion delivery"]
         ),
+        .init(target: .outputApp, title: "Always Paste Into App", terms: ["destination ChatGPT screenshots dictation output app"]),
+        .init(target: .captureLog, title: "Keep an HTML Capture Log", terms: ["screenshots dictation transcript HTML timeline export"]),
         .init(
             target: .spokenSend,
             title: "Spoken Send",

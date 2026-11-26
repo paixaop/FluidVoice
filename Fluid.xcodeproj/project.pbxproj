@@ -148,6 +148,8 @@
 		640AB09C7781553DF72D1156 /* CompactSpeechModelArchiveTransportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01DEEE85A263FAED9ED5DEF8 /* CompactSpeechModelArchiveTransportTests.swift */; };
 		F5E000000000000000000014 /* fv-serve in Embed Helpers */ = {isa = PBXBuildFile; fileRef = F5E000000000000000000005 /* fv-serve */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		C0DE123A0000000000000002 /* DictationContextCaptureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE123A0000000000000001 /* DictationContextCaptureTests.swift */; };
+		5C4E3E410000000000000002 /* ScreenshotWindowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C4E3E410000000000000001 /* ScreenshotWindowTests.swift */; };
+		CA9701000000000000000002 /* CaptureLogWriterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA9701000000000000000001 /* CaptureLogWriterTests.swift */; };
 		E01100000000000000000002 /* EditModeRouteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E01100000000000000000001 /* EditModeRouteTests.swift */; };
 		4F1300000000000000000001 /* Hummingbird in Frameworks */ = {isa = PBXBuildFile; productRef = 4F1300000000000000000004 /* Hummingbird */; };
 		4F1300000000000000000002 /* Hummingbird in Frameworks */ = {isa = PBXBuildFile; productRef = 4F1300000000000000000004 /* Hummingbird */; };
@@ -344,6 +346,8 @@
 		01DEEE85A263FAED9ED5DEF8 /* CompactSpeechModelArchiveTransportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompactSpeechModelArchiveTransportTests.swift; sourceTree = "<group>"; };
 		F5E000000000000000000005 /* fv-serve */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "fv-serve"; sourceTree = BUILT_PRODUCTS_DIR; };
 		C0DE123A0000000000000001 /* DictationContextCaptureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationContextCaptureTests.swift; sourceTree = "<group>"; };
+		5C4E3E410000000000000001 /* ScreenshotWindowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenshotWindowTests.swift; sourceTree = "<group>"; };
+		CA9701000000000000000001 /* CaptureLogWriterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureLogWriterTests.swift; sourceTree = "<group>"; };
 		E01100000000000000000001 /* EditModeRouteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditModeRouteTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -574,6 +578,8 @@
 				B51900000000000000000001 /* PrivateAIProviderPromptFormatTests.swift */,
 				B52000000000000000000001 /* PrivateAIDictationTokenBudgetTests.swift */,
 				C0DE123A0000000000000001 /* DictationContextCaptureTests.swift */,
+				5C4E3E410000000000000001 /* ScreenshotWindowTests.swift */,
+				CA9701000000000000000001 /* CaptureLogWriterTests.swift */,
 				E01100000000000000000001 /* EditModeRouteTests.swift */,
 				C0DE63700000000000000001 /* WhisperLanguageSelectionTests.swift */,
 				C0DE63800000000000000001 /* AppleSpeechLocaleSelectionTests.swift */,
@@ -992,6 +998,8 @@
 				B51800000000000000000002 /* SpokenSendTests.swift in Sources */,
 				B51900000000000000000002 /* PrivateAIProviderPromptFormatTests.swift in Sources */,
 				C0DE123A0000000000000002 /* DictationContextCaptureTests.swift in Sources */,
+				5C4E3E410000000000000002 /* ScreenshotWindowTests.swift in Sources */,
+				CA9701000000000000000002 /* CaptureLogWriterTests.swift in Sources */,
 				E01100000000000000000002 /* EditModeRouteTests.swift in Sources */,
 				C0DE63700000000000000002 /* WhisperLanguageSelectionTests.swift in Sources */,
 				C0DE63800000000000000002 /* AppleSpeechLocaleSelectionTests.swift in Sources */,

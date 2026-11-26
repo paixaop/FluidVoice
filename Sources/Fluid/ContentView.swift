@@ -162,6 +162,7 @@ enum ShortcutRecordingTarget: Hashable {
     case cancel
     case pasteLast
     case meeting
+    case screenshot
     case dictationPrompt(String)
     case newPrompt
 
@@ -181,6 +182,8 @@ enum ShortcutRecordingTarget: Hashable {
             return "Start / Stop Meeting"
         case .pasteLast:
             return "Paste Last Transcription"
+        case .screenshot:
+            return "Take Screenshot"
         case .dictationPrompt:
             return "Prompt Shortcut"
         case .newPrompt:
@@ -192,7 +195,7 @@ enum ShortcutRecordingTarget: Hashable {
         switch self {
         case .secondaryDictation, .command, .edit, .pasteLast:
             return true
-        case .primaryDictation, .cancel, .meeting, .dictationPrompt, .newPrompt:
+        case .primaryDictation, .cancel, .meeting, .screenshot, .dictationPrompt, .newPrompt:
             return false
         }
     }
@@ -206,9 +209,13 @@ enum ShortcutRecordingTarget: Hashable {
         switch self {
         case .primaryDictation, .pasteLast:
             return true
-        case .secondaryDictation, .command, .edit, .cancel, .meeting, .dictationPrompt, .newPrompt:
+        case .secondaryDictation, .command, .edit, .cancel, .meeting, .screenshot, .dictationPrompt, .newPrompt:
             return false
         }
+    }
+
+    var checksKeyboardModifierPrefixes: Bool {
+        self == .meeting || self == .screenshot
     }
 
     var isPrimaryDictation: Bool {
@@ -1313,8 +1320,11 @@ struct ContentView: View {
         if target == .cancel, shortcut.isModifierOnlyShortcut {
             return "Modifier-only keys can't cancel recording. Use Esc or include a regular key."
         }
-        if target == .meeting, !shortcut.isMeetingRecordingShortcut {
+        if target == .meeting, !shortcut.isModifiedKeyboardChord {
             return "Use a keyboard key with a modifier for meeting recording"
+        }
+        if target == .screenshot, !shortcut.isModifiedKeyboardChord {
+            return "Use a keyboard key with a modifier for screenshots"
         }
         if shortcut.isMouseShortcut {
             guard target.allowsMouseShortcut else {
@@ -1331,7 +1341,7 @@ struct ContentView: View {
             if configuredShortcut.hasSameTrigger(as: shortcut) {
                 return "Duplicate with Primary Dictation Shortcut"
             }
-            if shortcut.conflictsWith(configuredShortcut, includingKeyboardModifierPrefixes: target == .meeting) {
+            if shortcut.conflictsWith(configuredShortcut, includingKeyboardModifierPrefixes: target.checksKeyboardModifierPrefixes) {
                 return "Overlaps Primary Dictation Shortcut — use a different modifier key"
             }
         }
@@ -1351,6 +1361,7 @@ struct ContentView: View {
         }
         let optionalConfiguredShortcuts: [(ShortcutRecordingTarget, HotkeyShortcut?)] = [
             (.meeting, SettingsStore.shared.meetingRecordingHotkeyShortcut),
+            (.screenshot, SettingsStore.shared.screenshotHotkeyShortcut),
             (.cancel, self.cancelRecordingHotkeyShortcut),
         ]
 
@@ -1358,7 +1369,7 @@ struct ContentView: View {
             if configuredShortcut.hasSameTrigger(as: shortcut) {
                 return "Duplicate with \(otherTarget.title)"
             }
-            if shortcut.conflictsWith(configuredShortcut, includingKeyboardModifierPrefixes: target == .meeting || otherTarget == .meeting) {
+            if shortcut.conflictsWith(configuredShortcut, includingKeyboardModifierPrefixes: target.checksKeyboardModifierPrefixes || otherTarget.checksKeyboardModifierPrefixes) {
                 return "Overlaps \(otherTarget.title) — use a different modifier key"
             }
         }
@@ -1367,7 +1378,7 @@ struct ContentView: View {
             if configuredShortcut.hasSameTrigger(as: shortcut) {
                 return "Duplicate with \(otherTarget.title)"
             }
-            if shortcut.conflictsWith(configuredShortcut, includingKeyboardModifierPrefixes: target == .meeting || otherTarget == .meeting) {
+            if shortcut.conflictsWith(configuredShortcut, includingKeyboardModifierPrefixes: target.checksKeyboardModifierPrefixes || otherTarget.checksKeyboardModifierPrefixes) {
                 return "Overlaps \(otherTarget.title) — use a different modifier key"
             }
         }
@@ -1382,7 +1393,7 @@ struct ContentView: View {
             if assignment.shortcut.hasSameTrigger(as: shortcut) {
                 return "Duplicate with Prompt Shortcut"
             }
-            if shortcut.conflictsWith(assignment.shortcut, includingKeyboardModifierPrefixes: target == .meeting) {
+            if shortcut.conflictsWith(assignment.shortcut, includingKeyboardModifierPrefixes: target.checksKeyboardModifierPrefixes) {
                 return "Overlaps Prompt Shortcut — use a different modifier key"
             }
         }
@@ -1416,6 +1427,8 @@ struct ContentView: View {
             self.hotkeyManager?.updateRewriteModeShortcut(shortcut)
         case .meeting:
             SettingsStore.shared.meetingRecordingHotkeyShortcut = shortcut
+        case .screenshot:
+            SettingsStore.shared.screenshotHotkeyShortcut = shortcut
         case .cancel:
             self.cancelRecordingHotkeyShortcut = shortcut
             SettingsStore.shared.cancelRecordingHotkeyShortcut = shortcut
@@ -1470,7 +1483,7 @@ struct ContentView: View {
         case .pasteLast:
             self.isPasteLastTranscriptionShortcutEnabled = enabled
             SettingsStore.shared.pasteLastTranscriptionShortcutEnabled = enabled
-        case .primaryDictation, .cancel, .meeting, .dictationPrompt, .newPrompt:
+        case .primaryDictation, .cancel, .meeting, .screenshot, .dictationPrompt, .newPrompt:
             break
         }
     }
@@ -2659,13 +2672,13 @@ struct ContentView: View {
         return await self.prepareRecordingTargetForDelivery(text, keepBackup: keepBackup, needsRestoration: needsRestoration, isOutputValid: isOutputValid)
     }
 
-    private func showStoppedDictationDeliveryFailure(_ failure: TextDeliveryFailure, transcript: String, snapshot: DictationStopSnapshot?) {
-        if let snapshot {
+    private func showStoppedDictationDeliveryFailure(_ failure: TextDeliveryFailure, transcript: String, snapshot: DictationStopSnapshot?, outputApp: ConfiguredOutputApp?) {
+        if let snapshot, outputApp == nil {
             // Retry retains its captured-target behavior, now for the field selected at stop.
             NotchContentState.shared.recordingTargetContext = snapshot.target
             NotchContentState.shared.recordingTargetPID = snapshot.target?.pid
         }
-        self.showTextDeliveryFailure(failure, transcript: transcript)
+        self.showTextDeliveryFailure(failure, transcript: transcript, outputApp: outputApp)
     }
 
     private func resolveTypingTargetPID(returnToStartingField: Bool = true) -> (pid: pid_t?, shouldRestoreOriginalFocus: Bool) {
@@ -3160,8 +3173,10 @@ struct ContentView: View {
         let modeAtStop = self.activeRecordingMode
         let wasRewriteMode = modeAtStop == .edit || self.isRecordingForRewrite
         let wasCommandMode = modeAtStop == .command || self.isRecordingForCommand
+        let outputApp = route.deliversText && !wasRewriteMode && !wasCommandMode ? self.settings.activeOutputApp : nil
+        let shouldLog = route.deliversText && self.settings.captureLogEnabled
         let activeDictationSlot = self.currentDictationShortcutSlot(for: modeAtStop)
-        let autoSendAtStop = self.activeDictationAutoSend && activeDictationSlot != nil
+        let autoSendAtStop = self.activeDictationAutoSend && activeDictationSlot != nil && outputApp == nil
         let promptOverride = self.promptModeOverrideText
         let promptTest = DictationPromptTestCoordinator.shared
         let promptTestSessionID = promptTest.isActive ? promptTest.sessionID : nil
@@ -3171,7 +3186,7 @@ struct ContentView: View {
             DictationAIPostProcessingGate.isConfigured(for: $0, appBundleID: self.recordingAppInfo?.bundleId)
         } ?? DictationAIPostProcessingGate.isConfigured(for: .primary, appBundleID: self.recordingAppInfo?.bundleId)
         let shouldHideOverlayOnStop = route == .historyOnly || self.cancelledOutputLifecycleID == expectedOverlayLifecycleID || (
-            route == .normal && !wasRewriteMode && !wasCommandMode
+            route == .normal && !wasRewriteMode && !wasCommandMode && outputApp == nil
                 && !promptTest.isActive && !shouldUseAIOnStop && !self.settings.spokenSendEnabled && !autoSendAtStop
         )
         DebugLogger.shared.info(
@@ -3290,16 +3305,17 @@ struct ContentView: View {
         var aiTokensPerSecond: Double?
         var aiFallbackNotificationError: String?
         let appInfo = stopSnapshot?.appInfo ?? self.recordingAppInfo ?? self.getCurrentAppInfo()
+        let deliveryAppInfo = outputApp.map { (name: $0.name, bundleId: $0.bundleIdentifier, windowTitle: "") } ?? appInfo
         let punctuationFormattedText = ASRService.applySpokenPunctuationFormatting(
             transcribedText,
-            appName: appInfo.name,
-            bundleID: appInfo.bundleId,
-            windowTitle: appInfo.windowTitle
+            appName: deliveryAppInfo.name,
+            bundleID: deliveryAppInfo.bundleId,
+            windowTitle: deliveryAppInfo.windowTitle
         )
         let spokenSendParse = SpokenSendParser.parseArmed(
             punctuationFormattedText,
             phrase: self.settings.spokenSendPhrase,
-            enabled: !cancelledAtASRStop && route.deliversText && self.settings.spokenSendEnabled,
+            enabled: !cancelledAtASRStop && route.deliversText && self.settings.spokenSendEnabled && outputApp == nil,
             wasArmed: self.spokenSendArming.wasArmed
         )
         self.updateSpokenSendIndicatorForFinalParse(shouldSend: spokenSendParse.shouldSend)
@@ -3404,15 +3420,16 @@ struct ContentView: View {
         finalText = ASRService.applyGAAVFormatting(finalText)
         // Apply Continuous Dictation Mode after GAAV so smart caps use the field
         // context captured at recording start, and the trailing space enables chaining.
-        finalText = ASRService.applyContinuousDictationFormatting(finalText, precedingText: stopSnapshot?.precedingText ?? self.recordingPrecedingText)
+        let precedingText = outputApp == nil ? (stopSnapshot?.precedingText ?? self.recordingPrecedingText) : ""
+        finalText = ASRService.applyContinuousDictationFormatting(finalText, precedingText: precedingText)
         // Run after smart capitalization too: a continued sentence must not turn 5B into 5b.
         finalText = textNormalizer.normalize(finalText, phase: .afterCleanup)
         finalText = ASRService.applyCaseSensitiveDictionary(finalText, rules: finalDictionaryRules, initialRule: initialDictionaryRule)
         finalText = ASRService.applyTerminalLiteralAutocompleteSpacing(
             finalText,
-            appName: appInfo.name,
-            bundleID: appInfo.bundleId,
-            windowTitle: appInfo.windowTitle
+            appName: deliveryAppInfo.name,
+            bundleID: deliveryAppInfo.bundleId,
+            windowTitle: deliveryAppInfo.windowTitle
         )
         self.recordingPrecedingText = ""
         let outputRoute: DictationOutputRoute = route == .normal && self.cancelledOutputLifecycleID == expectedOverlayLifecycleID ? .historyOnly : route
@@ -3421,7 +3438,7 @@ struct ContentView: View {
             sendsExistingDraft = false
             finalText = ASRService.applyGAAVFormatting(punctuationFormattedText)
         }
-        if outputRoute.publishesEditorResult, self.cancelledOutputLifecycleID != expectedOverlayLifecycleID { self.asr.finalText = finalText }
+        if outputRoute.publishesEditorResult, outputApp == nil, self.cancelledOutputLifecycleID != expectedOverlayLifecycleID { self.asr.finalText = finalText }
         if route == .onboardingSandbox,
            self.cancelledOutputLifecycleID != expectedOverlayLifecycleID,
            self.isOnboardingVoicePlaygroundStepActive,
@@ -3460,6 +3477,9 @@ struct ContentView: View {
 
         let shouldPersistOutputs = outputRoute.savesHistory
         let shouldDeliverOutputs = outputRoute.deliversText
+        if shouldLog, shouldDeliverOutputs, !sendsExistingDraft, !finalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            CaptureLog.shared.record(.transcript(finalText))
+        }
         if !shouldPersistOutputs {
             DebugLogger.shared.info(
                 "Sandbox route active: suppressing clipboard/history/external typing side effects",
@@ -3508,7 +3528,7 @@ struct ContentView: View {
         let shouldCopyToClipboard = shouldDeliverOutputs &&
             !sendsExistingDraft &&
             SettingsStore.shared.copyTranscriptionToClipboard
-        let shouldTypeExternally = shouldDeliverOutputs && !isFluidFrontmost
+        let shouldTypeExternally = shouldDeliverOutputs && (!isFluidFrontmost || outputApp != nil)
 
         /// Send-only stops normally have no History row. Recover their words if
         /// Escape arrives after the output decision but before delivery completes.
@@ -3538,7 +3558,7 @@ struct ContentView: View {
         // A sidebar search field that was already focused when recording began gets
         // the text through its field editor, which also fires change notifications.
         // So does an in-app editor that opted in with `DictationTextTarget`.
-        if isFluidFrontmost, shouldDeliverOutputs, !sendsExistingDraft,
+        if isFluidFrontmost, outputApp == nil, shouldDeliverOutputs, !sendsExistingDraft,
            let focusTarget = self.recordingFocusTarget,
            focusTarget.pid == ProcessInfo.processInfo.processIdentifier,
            TypingService.isExactFocusTargetActive(focusTarget),
@@ -3564,13 +3584,17 @@ struct ContentView: View {
                 && !self.isSpokenSendBlockedApp(appInfo)
             // Dispatch insertion as soon as the destination app is ready; the
             // overlay hides asynchronously after output so it cannot delay paste.
-            let focusReady = await self.prepareStoppedDictationDelivery(
-                finalText,
-                keepBackup: shouldCopyToClipboard,
-                snapshot: stopSnapshot,
-                needsRestoration: typingTarget.shouldRestoreOriginalFocus,
-                isOutputValid: { self.cancelledOutputLifecycleID != expectedOverlayLifecycleID }
-            )
+            let focusReady = if outputApp == nil {
+                await self.prepareStoppedDictationDelivery(
+                    finalText,
+                    keepBackup: shouldCopyToClipboard,
+                    snapshot: stopSnapshot,
+                    needsRestoration: typingTarget.shouldRestoreOriginalFocus,
+                    isOutputValid: { self.cancelledOutputLifecycleID != expectedOverlayLifecycleID }
+                )
+            } else {
+                true
+            }
             // Escape can arrive while focus restoration is suspended; History is already saved.
             guard self.cancelledOutputLifecycleID != expectedOverlayLifecycleID else {
                 saveCancelledSendOnlyHistory()
@@ -3614,15 +3638,21 @@ struct ContentView: View {
                 self.appBench(
                     "text_ready_to_type_request elapsedMs=\(Int(((ProcessInfo.processInfo.systemUptime - finalTextReadyAt) * 1000).rounded()))"
                 )
-                deliveryResult = await self.asr.typeOutputPlanToActiveField(
-                    finalOutputPlan,
-                    preferredTargetPID: typingTarget.pid,
-                    textReadyAt: finalTextReadyAt,
-                    toggleStopRequestedAt: toggleStopRequestedAt,
-                    tracksDictionaryCorrections: true,
-                    preserveTranscriptOnClipboard: shouldCopyToClipboard,
-                    isOutputValid: { self.cancelledOutputLifecycleID != expectedOverlayLifecycleID }
-                )
+                if let outputApp {
+                    deliveryResult = await outputApp.deliverTranscript(finalText, keepClipboardBackup: shouldCopyToClipboard) {
+                        self.cancelledOutputLifecycleID != expectedOverlayLifecycleID
+                    }
+                } else {
+                    deliveryResult = await self.asr.typeOutputPlanToActiveField(
+                        finalOutputPlan,
+                        preferredTargetPID: typingTarget.pid,
+                        textReadyAt: finalTextReadyAt,
+                        toggleStopRequestedAt: toggleStopRequestedAt,
+                        tracksDictionaryCorrections: true,
+                        preserveTranscriptOnClipboard: shouldCopyToClipboard,
+                        isOutputValid: { self.cancelledOutputLifecycleID != expectedOverlayLifecycleID }
+                    )
+                }
                 didTypeExternally = deliveryResult.wasDispatched
                 self.handleTypingDelivery(
                     deliveryResult.wasDispatched ? .inserted : .insertionFailed,
@@ -3655,12 +3685,12 @@ struct ContentView: View {
 
             if case let .recoverableFailure(failure) = deliveryResult {
                 didFailTextDelivery = true
-                self.showStoppedDictationDeliveryFailure(failure, transcript: finalText, snapshot: stopSnapshot)
+                self.showStoppedDictationDeliveryFailure(failure, transcript: finalText, snapshot: stopSnapshot, outputApp: outputApp)
             } else if !shouldShowAIProcessingFailure, !stopOverlay.didRequestHide {
                 self.hideOverlayAfterOutput()
             }
             // Delivery UI must complete before correction tracking queries Accessibility.
-            if didTypeExternally, !spokenSendAllowed {
+            if didTypeExternally, !spokenSendAllowed, outputApp == nil {
                 AutomaticDictionaryCorrectionTracker.shared.beginObservingInsertion(
                     finalOutputPlan.plainText,
                     targetPID: typingTarget.pid,
@@ -3929,10 +3959,10 @@ struct ContentView: View {
         NotchContentState.shared.setSpokenSendIndicatorState(shouldSend ? .detected : .hidden)
     }
 
-    private func showTextDeliveryFailure(_ failure: TextDeliveryFailure, transcript: String) {
+    private func showTextDeliveryFailure(_ failure: TextDeliveryFailure, transcript: String, outputApp: ConfiguredOutputApp? = nil) {
         let failure = failure != .emptyText && !AXIsProcessTrusted() ? TextDeliveryFailure.accessibilityNotTrusted : failure
         DebugLogger.shared.warning("Text delivery failed: \(failure.rawValue)", source: "ContentView")
-        NotchContentState.shared.recordTextDeliveryFailure(failure, transcript: transcript)
+        NotchContentState.shared.recordTextDeliveryFailure(failure, transcript: transcript, outputApp: outputApp)
         guard failure.userFacingMessage != nil else {
             self.hideOverlayAfterOutput()
             return
@@ -3984,6 +4014,7 @@ struct ContentView: View {
         guard self.settings.spokenSendEnabled else { return }
         let isDictationMode = self.activeRecordingMode == .dictate || self.activeRecordingMode == .promptMode
         let isEligible = isDictationMode &&
+            self.settings.activeOutputApp == nil &&
             self.cancelledOutputLifecycleID != self.overlayLifecycleID &&
             self.currentDictationOutputRouteForHotkeyStop() == .normal &&
             self.asr.isRunning &&
@@ -4032,6 +4063,7 @@ struct ContentView: View {
                   NotchContentState.shared.spokenSendCountdownID == expectedCountdownID,
                   self.asr.isRunning,
                   self.activeRecordingMode == .dictate || self.activeRecordingMode == .promptMode,
+                  self.settings.activeOutputApp == nil,
                   self.currentDictationOutputRouteForHotkeyStop() == .normal,
                   !self.spokenSendAutoStopTriggered,
                   SpokenSendParser.canCompleteImmediateStop(
@@ -4270,7 +4302,7 @@ struct ContentView: View {
             // released — effectively "paste when you let go". The timeout is generous so a normal
             // hold (or a quick repeated press) still pastes on release; it only aborts if a modifier
             // is genuinely stuck, rather than typing a corrupted/destructive shortcut sequence.
-            guard await Self.waitForHotkeyModifiersReleased(timeout: 5) else {
+            guard await TypingService.waitForHotkeyModifiersReleased(timeout: 5) else {
                 DebugLogger.shared.info("Actions: Paste aborted - modifier keys still held after timeout", source: "ContentView")
                 return
             }
@@ -4308,11 +4340,24 @@ struct ContentView: View {
     }
 
     @MainActor
-    private func retryTextDelivery(_ transcript: String) async {
+    private func retryTextDelivery(_ transcript: String, outputApp: ConfiguredOutputApp?) async {
         guard !transcript.isEmpty else { return }
 
         self.menuBarManager.setProcessing(true)
         NotchOverlayManager.shared.updateTranscriptionText("Inserting")
+        if let outputApp {
+            let lifecycleID = self.overlayLifecycleID
+            let result = await outputApp.deliverTranscript(transcript, keepClipboardBackup: self.settings.copyTranscriptionToClipboard) {
+                self.overlayLifecycleID == lifecycleID && self.cancelledOutputLifecycleID != lifecycleID
+            }
+            guard self.overlayLifecycleID == lifecycleID else { return }
+            if case let .recoverableFailure(failure) = result {
+                self.showTextDeliveryFailure(failure, transcript: transcript, outputApp: outputApp)
+            } else {
+                self.hideOverlayAfterOutput()
+            }
+            return
+        }
         let typingTarget = self.resolveTypingTargetPID()
         if typingTarget.shouldRestoreOriginalFocus,
            !(await self.prepareRecordingTargetForDelivery(transcript, keepBackup: SettingsStore.shared.copyTranscriptionToClipboard))
@@ -4338,22 +4383,6 @@ struct ContentView: View {
     /// waiting for the modifier keys to release is ignored rather than queuing a duplicate insert.
     /// Only ever touched on the main actor.
     private static var isPasteLastInProgress = false
-
-    /// Polls until the keyboard modifier keys are released, returning `true` once they are, or
-    /// `false` if the timeout elapses with keys still held. Used before synthesizing a paste so the
-    /// inserted characters aren't swallowed as modifier+key shortcuts.
-    private static func waitForHotkeyModifiersReleased(timeout: TimeInterval) async -> Bool {
-        let relevant: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate, .maskShift, .maskSecondaryFn]
-        let start = Date()
-        while Date().timeIntervalSince(start) < timeout {
-            let flags = CGEventSource.flagsState(.combinedSessionState)
-            if flags.isDisjoint(with: relevant) {
-                return true
-            }
-            try? await Task.sleep(nanoseconds: 15_000_000) // 15ms
-        }
-        return false
-    }
 
     private func undoLastAIProcessingFromHistory() {
         guard let last = TranscriptionHistoryStore.shared.entries.first else {
@@ -4810,8 +4839,8 @@ struct ContentView: View {
             DebugLogger.shared.debug("ContentView: start ignored because capture is already active", source: "ContentView")
             return nil
         }
-        self.activeDictationAutoSend = autoSend
-        NotchContentState.shared.isAutoSendArmed = autoSend
+        self.activeDictationAutoSend = autoSend && self.settings.activeOutputApp == nil
+        NotchContentState.shared.isAutoSendArmed = self.activeDictationAutoSend
         self.advanceOverlayLifecycle()
         self.setActiveRecordingMode(.dictate)
         let shouldShowDictationOverlay = !self.isRecordingForCommand
@@ -5187,9 +5216,9 @@ struct ContentView: View {
         NotchContentState.shared.onPasteLastRequested = {
             self.pasteLastDictationFromHistory()
         }
-        NotchContentState.shared.onRetryTextDeliveryRequested = { transcript in
+        NotchContentState.shared.onRetryTextDeliveryRequested = { transcript, outputApp in
             Task { @MainActor in
-                await self.retryTextDelivery(transcript)
+                await self.retryTextDelivery(transcript, outputApp: outputApp)
             }
         }
         NotchContentState.shared.onUndoLastAIRequested = {
@@ -5297,6 +5326,9 @@ struct ContentView: View {
         // Re-insert the most recent transcription on demand (no clipboard involved).
         self.hotkeyManager?.setPasteLastTranscriptionCallback {
             self.pasteLastDictationFromHistory()
+        }
+        self.hotkeyManager?.setScreenshotCallback {
+            Task { await ScreenshotCapture.shared.captureFromShortcut() }
         }
 
         // Monitor initialization status
@@ -5622,8 +5654,8 @@ extension ContentView {
         let switchesOwnedCapture = self.canSwitchActiveDictationCaptureMode
         let previousMode = self.activeRecordingMode
         if !switchesOwnedCapture {
-            self.activeDictationAutoSend = autoSend
-            NotchContentState.shared.isAutoSendArmed = autoSend
+            self.activeDictationAutoSend = autoSend && self.settings.activeOutputApp == nil
+            NotchContentState.shared.isAutoSendArmed = self.activeDictationAutoSend
         }
         DebugLogger.shared.debug("Begin dictation recording for slot \(slot.rawValue)", source: "ContentView")
         DebugLogger.shared.debug("CLOSE_DETAIL nextStartRequested uptime=\(ProcessInfo.processInfo.systemUptime)", source: "StopTiming")
