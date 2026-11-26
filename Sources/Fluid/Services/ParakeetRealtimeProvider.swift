@@ -153,6 +153,11 @@ final class ParakeetRealtimeProvider: TranscriptionProvider {
         return ASRTranscriptionResult(text: text, confidence: text.isEmpty ? 0 : 1)
     }
 
+    func resetDictationStreamingState() async {
+        await self.engine?.reset()
+        self.streamedSampleCount = 0
+    }
+
     func modelsExistOnDisk() -> Bool {
         self.missingRequiredModelFiles().isEmpty
     }

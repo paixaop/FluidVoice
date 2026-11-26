@@ -329,7 +329,7 @@ enum SettingsSearchIndex {
         .init(target: .outputApp, title: "Always Paste Into App", terms: ["destination ChatGPT screenshots dictation output app"]),
         .init(target: .captureLog, title: "Keep an HTML Capture Log", terms: ["screenshots dictation transcript HTML timeline export"]),
         .init(target: .newCaptureTranscriptShortcut, title: "New Capture Transcript", terms: ["start new capture transcript", "capture log keyboard shortcut HTML new page"]),
-        .init(target: .captureAI, title: "Screenshot and Meeting Analysis", terms: ["OpenAI ChatGPT OAuth image prompt edit summary prompt"]),
+        .init(target: .captureAI, title: "Screenshot and Meeting Analysis", terms: ["OpenAI ChatGPT OAuth image prompt edit summary prompt reasoning effort thinking"]),
         .init(
             target: .spokenSend,
             title: "Spoken Send",

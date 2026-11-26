@@ -70,6 +70,28 @@ final class LLMClientRequestBodyTests: XCTestCase {
 
     // MARK: - Responses endpoint
 
+    func testCaptureEffortUsesResponsesReasoningAndLeavesModelDefaultUnspecified() throws {
+        var config = LLMClient.Config(
+            messages: [["role": "user", "content": "test"]],
+            model: CaptureAI.defaultModel,
+            baseURL: CaptureAI.baseURL + "/responses",
+            apiKey: "",
+            maxTokens: 1800
+        )
+        CaptureAI.Effort.automatic.apply(to: &config)
+        XCTAssertNil(LLMClient.shared.buildResponsesBody(config)["reasoning"])
+        XCTAssertEqual(config.maxTokens, 1800)
+
+        XCTAssertFalse(CaptureAI.Effort.options(for: config.model).contains(.none))
+        CaptureAI.Effort.xhigh.apply(to: &config)
+        let request = try LLMClient.shared.buildRequest(config)
+        let data = try XCTUnwrap(request.httpBody)
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual((body["reasoning"] as? [String: String])?["effort"], "xhigh")
+        XCTAssertEqual(body["max_output_tokens"] as? Int, 25_000)
+        XCTAssertNil(body["reasoning_effort"])
+    }
+
     func testResponsesBody_streamFalse_keyIsPresentAndFalse() {
         let body = LLMClient.shared.buildResponsesBody(self.config(streaming: false))
         XCTAssertNotNil(body["stream"], "stream key must be present when streaming=false")

@@ -3,15 +3,22 @@ import Combine
 
 @MainActor
 final class CaptureLog: ObservableObject {
-    static let shared = CaptureLog()
+    static let shared = CaptureLog(writer: CaptureLogWriter())
     typealias ScreenshotEntry = Task<CaptureLogWriter.EntryLocation?, Never>
+
+    struct DictationEntry {
+        let location: Task<CaptureLogWriter.EntryLocation?, Never>
+        let timestamp: Date
+    }
 
     @Published private(set) var errorMessage: String?
     @Published private(set) var isSummarizing = false
-    private let writer = CaptureLogWriter()
+    private let writer: CaptureLogWriter
     private var pendingOperation: Task<Void, Never>?
 
-    private init() {}
+    init(writer: CaptureLogWriter) {
+        self.writer = writer
+    }
 
     func record(_ entry: CaptureLogWriter.Entry, at timestamp: Date = .now) {
         guard SettingsStore.shared.captureLogEnabled else { return }
@@ -20,10 +27,36 @@ final class CaptureLog: ObservableObject {
         }
     }
 
-    func recordScreenshot(_ png: Task<Data, Error>, at timestamp: Date) -> ScreenshotEntry? {
-        guard SettingsStore.shared.captureLogEnabled else { return nil }
-        return self.enqueue {
-            try await self.writer.append(.screenshot(png.value), at: timestamp)
+    func beginDictation(at timestamp: Date = .now) -> DictationEntry {
+        let location = self.enqueue { try await self.writer.append(.liveDictation, at: timestamp) }
+        return DictationEntry(location: location, timestamp: timestamp)
+    }
+
+    func writeDictation(_ text: String, to entry: DictationEntry) {
+        self.enqueue {
+            try await self.writeDictationNow(text, to: entry)
+        }
+    }
+
+    func recordScreenshot(
+        _ png: Task<Data, Error>,
+        at timestamp: Date,
+        after checkpoint: DictationCaptureTranscript.Checkpoint? = nil
+    ) -> ScreenshotEntry {
+        let write = self.enqueue { () async throws -> CaptureLogWriter.EntryLocation? in
+            if let checkpoint {
+                try await self.writeDictationNow(checkpoint.result.value.text, to: checkpoint.entry)
+            }
+            // ScreenshotCapture reports acquisition failures. They aren't HTML write errors.
+            guard let data = try? await png.value else { return nil }
+            return try await self.writer.append(.screenshot(data), at: timestamp)
+        }
+        return Task { await write.value ?? nil }
+    }
+
+    private func writeDictationNow(_ text: String, to entry: DictationEntry) async throws {
+        if let location = await entry.location.value {
+            try await self.writer.writeDictation(text, to: location, at: entry.timestamp)
         }
     }
 

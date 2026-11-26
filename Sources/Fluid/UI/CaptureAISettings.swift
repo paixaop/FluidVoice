@@ -7,6 +7,7 @@ struct CaptureAISettings: View {
     @AppStorage(CaptureAI.summaryKey) private var summarizesMeetings = false
     @AppStorage(CaptureAI.credentialKey) private var credential = CaptureAI.Credential.apiKey
     @AppStorage(CaptureAI.modelKey) private var model = CaptureAI.defaultModel
+    @AppStorage(CaptureAI.effortKey) private var effort = CaptureAI.Effort.automatic
     @ObservedObject private var chatGPT = CaptureChatGPT.shared
     @ObservedObject private var analysis = CaptureAI.shared
     @State private var message: String?
@@ -20,7 +21,7 @@ struct CaptureAISettings: View {
 
             self.option(
                 "Analyze Screenshots",
-                help: "Send each screenshot and available meeting captions through capture time to OpenAI. Show the result in a floating panel.",
+                help: "Send each screenshot and available transcript text through capture time to OpenAI. Show the result in a floating panel.",
                 isOn: self.$analyzesScreenshots
             )
             self.option(
@@ -45,24 +46,14 @@ struct CaptureAISettings: View {
                     .foregroundStyle(self.theme.palette.secondaryText)
             }
 
-            HStack {
-                Text("Vision model")
-                Spacer()
-                if self.credential == .chatGPT, self.chatGPT.email != nil {
-                    Button("Load Models") { self.loadModels() }
-                        .fluidOutlinedButton()
-                        .disabled(self.loadingModels || self.chatGPT.isBusy)
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    self.modelControls
+                    self.effortControl
                 }
-                if self.models.isEmpty || self.credential != .chatGPT {
-                    TextField("Model ID", text: self.$model)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(maxWidth: 180)
-                } else {
-                    Menu(self.models.first(where: { $0.slug == self.model })?.display_name ?? self.model) {
-                        ForEach(self.models) { model in
-                            Button(model.display_name) { self.model = model.slug }
-                        }
-                    }
+                VStack(alignment: .leading) {
+                    self.modelControls
+                    HStack { Spacer(); self.effortControl }
                 }
             }
 
@@ -96,6 +87,48 @@ struct CaptureAISettings: View {
                 do { try self.chatGPT.load() } catch { self.message = error.localizedDescription }
             }
         }
+    }
+
+    private var modelControls: some View {
+        HStack {
+            Text("Vision model")
+            Spacer()
+            if self.credential == .chatGPT, self.chatGPT.email != nil {
+                Button("Load Models") { self.loadModels() }
+                    .fluidOutlinedButton()
+                    .disabled(self.loadingModels || self.chatGPT.isBusy)
+            }
+            if self.models.isEmpty || self.credential != .chatGPT {
+                TextField("Model ID", text: self.$model)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(minWidth: 100, maxWidth: 180)
+            } else {
+                Menu(self.models.first(where: { $0.slug == self.model })?.display_name ?? self.model) {
+                    ForEach(self.models) { model in
+                        Button(model.display_name) { self.model = model.slug }
+                    }
+                }
+            }
+        }
+    }
+
+    private var effortControl: some View {
+        let modelID = self.model.trimmingCharacters(in: .whitespacesAndNewlines)
+        let options = CaptureAI.Effort.options(for: modelID.isEmpty ? CaptureAI.defaultModel : modelID)
+        let selection = Binding(
+            get: { options.contains(self.effort) ? self.effort : .automatic },
+            set: { self.effort = $0 }
+        )
+        return HStack {
+            Text("Reasoning effort")
+            FluidDropdownPicker("Reasoning effort", selectedTitle: selection.wrappedValue.title, selection: selection) {
+                ForEach(options, id: \.self) { effort in
+                    Text(effort.title).tag(effort)
+                }
+            }
+            .fluidDropdownStyle()
+        }
+        .help("Reasoning effort for screenshot analysis and summaries. Supported levels vary by model.")
     }
 
     private var accountControls: some View {

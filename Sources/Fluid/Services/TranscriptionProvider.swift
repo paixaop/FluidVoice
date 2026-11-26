@@ -166,6 +166,9 @@ protocol TranscriptionProvider {
     /// Providers can use higher-quality passes (e.g., vocabulary rescoring) here.
     func transcribeFinal(_ samples: [Float]) async throws -> ASRTranscriptionResult
 
+    /// Clear any preview state tied to a different range of the microphone buffer.
+    func resetDictationStreamingState() async
+
     /// Transcribe audio captured while training dictionary replacements.
     /// Providers can bypass final-output transforms that would distort the saved phrase.
     func transcribeDictionaryTraining(_ samples: [Float]) async throws -> ASRTranscriptionResult
@@ -224,6 +227,8 @@ extension TranscriptionProvider {
     func transcribeFinal(_ samples: [Float]) async throws -> ASRTranscriptionResult {
         try await self.transcribe(samples)
     }
+
+    func resetDictationStreamingState() async {}
 
     func transcribeDictionaryTraining(_ samples: [Float], capturePronunciation: Bool) async throws -> ASRTranscriptionResult {
         try await self.transcribeDictionaryTraining(samples)

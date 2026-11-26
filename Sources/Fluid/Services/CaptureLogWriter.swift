@@ -3,6 +3,7 @@ import Foundation
 actor CaptureLogWriter {
     enum Entry {
         case transcript(String)
+        case liveDictation
         case screenshot(Data)
     }
 
@@ -70,15 +71,14 @@ actor CaptureLogWriter {
             }
 
             let id = UUID().uuidString.lowercased()
-            let title: String
-            let content: String
+            let item: String
             var imageURL: URL?
             switch entry {
             case let .transcript(text):
-                title = "Dictation"
-                content = "<p class=\"transcript\">\(HTMLText.escape(text))</p>"
+                item = Self.dictationItem(text, id: id, at: timestamp)
+            case .liveDictation:
+                item = Self.dictationMarker(id) + Self.dictationMarker(id, closing: true)
             case let .screenshot(png):
-                title = "Screenshot"
                 let images = self.folder.appendingPathComponent("images", isDirectory: true)
                 try FileManager.default.createDirectory(at: images, withIntermediateDirectories: true)
                 let filename = "\(id).png"
@@ -86,19 +86,10 @@ actor CaptureLogWriter {
                 try png.write(to: fileURL, options: .atomic)
                 imageURL = fileURL
                 let path = "images/\(filename)"
-                content = "<a href=\"\(path)\"><img src=\"\(path)\" alt=\"Open screenshot at full size\" loading=\"lazy\"></a>\(HTMLText.imageAnalysisMarker(id))"
+                let content = "<a href=\"\(path)\"><img src=\"\(path)\" alt=\"Open screenshot at full size\" loading=\"lazy\"></a>\(HTMLText.imageAnalysisMarker(id))"
+                item = Self.item("Screenshot", content: content, id: id, at: timestamp)
             }
 
-            let isoDate = timestamp.formatted(Date.ISO8601FormatStyle(includingFractionalSeconds: true))
-            let label = HTMLText.escape(timestamp.formatted(date: .abbreviated, time: .standard))
-            let item = """
-
-                 <li><article id="entry-\(id)">
-                   <h2>\(title)</h2>
-                   <time datetime="\(isoDate)">\(label)</time>
-                   \(content)
-                 </article></li>
-            """
             var body = String(existing[..<entriesEnd.lowerBound])
             if body.hasSuffix(Self.emptyEntry) { body.removeLast(Self.emptyEntry.count) }
             let updated = body + item + existing[entriesEnd.lowerBound...]
@@ -112,13 +103,50 @@ actor CaptureLogWriter {
         }
     }
 
+    func writeDictation(_ text: String, to entry: EntryLocation, at timestamp: Date) throws {
+        try self.withPageLock {
+            guard self.ownsPage(entry.page) else { return }
+            var html = try String(contentsOf: entry.page, encoding: .utf8)
+            guard let start = html.range(of: Self.dictationMarker(entry.id)),
+                  let end = html.range(of: Self.dictationMarker(entry.id, closing: true), range: start.upperBound..<html.endIndex)
+            else { return }
+            let item = text.isEmpty ? "" : Self.dictationItem(text, id: entry.id, at: timestamp)
+            html.replaceSubrange(start.upperBound..<end.lowerBound, with: item)
+            try html.write(to: entry.page, atomically: true, encoding: .utf8)
+        }
+    }
+
     func addImageAnalysis(_ markdown: String, to entry: EntryLocation) throws {
         try self.withPageLock {
-            guard entry.page.deletingLastPathComponent().standardizedFileURL.path == self.folder.standardizedFileURL.path,
-                  FileManager.default.fileExists(atPath: entry.page.path)
-            else { return }
+            guard self.ownsPage(entry.page) else { return }
             try HTMLText.writeImageAnalysis(markdown, id: entry.id, to: entry.page)
         }
+    }
+
+    private func ownsPage(_ page: URL) -> Bool {
+        page.deletingLastPathComponent().standardizedFileURL.path == self.folder.standardizedFileURL.path &&
+            FileManager.default.fileExists(atPath: page.path)
+    }
+
+    private static func dictationMarker(_ id: String, closing: Bool = false) -> String {
+        "<!-- \(closing ? "/" : "")dictation:\(id) -->"
+    }
+
+    private static func dictationItem(_ text: String, id: String, at timestamp: Date) -> String {
+        self.item("Dictation", content: "<p class=\"transcript\">\(HTMLText.escape(text))</p>", id: id, at: timestamp)
+    }
+
+    private static func item(_ title: String, content: String, id: String, at timestamp: Date) -> String {
+        let isoDate = timestamp.formatted(Date.ISO8601FormatStyle(includingFractionalSeconds: true))
+        let label = HTMLText.escape(timestamp.formatted(date: .abbreviated, time: .standard))
+        return """
+
+             <li><article id="entry-\(id)">
+               <h2>\(title)</h2>
+               <time datetime="\(isoDate)">\(label)</time>
+               \(content)
+             </article></li>
+        """
     }
 
     func savedTranscripts() throws -> [HTMLText.Transcript] {
