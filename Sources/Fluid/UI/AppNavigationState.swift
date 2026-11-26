@@ -63,6 +63,7 @@ enum SettingsSection: String, CaseIterable, Identifiable, Hashable {
     case dictation
     case dictationFormatting
     case shortcuts
+    case capture
     case notifications
     case audio
     case overlay
@@ -80,6 +81,7 @@ enum SettingsSection: String, CaseIterable, Identifiable, Hashable {
         case .dictation: return "Dictation"
         case .dictationFormatting: return "Dictation Formatting"
         case .shortcuts: return "Shortcuts"
+        case .capture: return "Capture"
         case .notifications: return "Notifications"
         case .audio: return "Audio"
         case .overlay: return "Overlay"
@@ -95,6 +97,7 @@ enum SettingsSection: String, CaseIterable, Identifiable, Hashable {
         case .dictation: return "mic"
         case .dictationFormatting: return "textformat"
         case .shortcuts: return "keyboard"
+        case .capture: return "camera.viewfinder"
         case .notifications: return "bell"
         case .audio: return "speaker.wave.2"
         case .overlay: return "rectangle.on.rectangle"

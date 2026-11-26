@@ -12,6 +12,85 @@ import XCTest
 // Existing recovery suite shares setup across crash and corruption scenarios.
 // swiftlint:disable:next type_body_length
 final class MeetingRecoveryTests: XCTestCase {
+    func testMeetingHTMLTranscriptOpensOnceAtStopBeforeBatchProcessing() async throws {
+        let original = UserDefaults.standard.object(forKey: "FluidMeetEnabled")
+        defer { UserDefaults.standard.set(original, forKey: "FluidMeetEnabled") }
+        SettingsStore.shared.fluidMeetEnabled = true
+        let directory = self.makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = MeetingSessionStore(rootDirectory: directory)
+        let capture = StubCaptureController()
+        let track = self.makeMicrophoneTrack(chunks: [self.makeFinalizedChunk()])
+        capture.startResult = MeetingCaptureStartResult(tracks: [track], firstPresentationTime: nil)
+        let processing = GatedProcessingController()
+        defer { processing.openGate() }
+        var opened: [URL] = []
+        let coordinator = MeetingSessionCoordinator(
+            store: store,
+            capture: capture,
+            processing: processing,
+            audioArbiter: StubArbiter(),
+            openHTMLTranscript: { opened.append($0); return true }
+        )
+        var configuration = self.makeConfiguration()
+        configuration.languageCode = "es"
+        let first = try await coordinator.startRecording(configuration: configuration)
+        let firstDirectory = try await store.sessionDirectory(for: first.id)
+        let firstPage = firstDirectory.appendingPathComponent(MeetingHTMLTranscript.filename)
+        XCTAssertTrue(try String(contentsOf: firstPage, encoding: .utf8).contains("Recording"))
+        XCTAssertTrue(opened.isEmpty)
+        let screenshotSessionID = try XCTUnwrap(coordinator.screenshotSessionID)
+        let screenshotTime = CMClockGetTime(CMClockGetHostTimeClock())
+        let (pngBytes, delivery) = AsyncStream<Data>.makeStream()
+        let screenshot = Task<Data, Error> {
+            var bytes = pngBytes.makeAsyncIterator()
+            return await bytes.next() ?? Data()
+        }
+        defer { delivery.finish() }
+        coordinator.recordScreenshot(for: screenshotSessionID, capturedAt: screenshotTime, png: screenshot)
+
+        capture.stopResult = MeetingCaptureStopResult(tracks: [track], stoppedAt: .now)
+        let stop = Task { try await coordinator.stopAndTranscribe() }
+        for _ in 0..<200 {
+            if capture.stopCount > 0 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(capture.stopCount, 1)
+        XCTAssertNil(coordinator.screenshotSessionID)
+        XCTAssertTrue(opened.isEmpty)
+        delivery.yield(Data([0x01]))
+        delivery.finish()
+        for _ in 0..<200 {
+            if processing.didStart { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertTrue(processing.didStart)
+        XCTAssertEqual(opened, [firstPage])
+        let stoppedHTML = try String(contentsOf: firstPage, encoding: .utf8)
+        XCTAssertTrue(stoppedHTML.contains("Stopped"))
+        XCTAssertTrue(stoppedHTML.contains("Live captions support English only"))
+        XCTAssertTrue(stoppedHTML.contains("<img src=\"screenshots/"))
+        processing.openGate()
+        _ = try await stop.value
+        XCTAssertEqual(try String(contentsOf: firstPage, encoding: .utf8), stoppedHTML)
+
+        for _ in 0..<200 {
+            if coordinator.isQuiescent { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertTrue(coordinator.isQuiescent)
+        let second = try await coordinator.startRecording(configuration: configuration)
+        let secondDirectory = try await store.sessionDirectory(for: second.id)
+        let secondPage = secondDirectory.appendingPathComponent(MeetingHTMLTranscript.filename)
+        XCTAssertNotEqual(firstPage, secondPage)
+        XCTAssertTrue(try String(contentsOf: secondPage, encoding: .utf8).contains("Recording"))
+        coordinator.recordScreenshot(for: screenshotSessionID, capturedAt: screenshotTime, png: screenshot)
+        capture.stopResult = MeetingCaptureStopResult(tracks: [track], stoppedAt: .now)
+        _ = try await coordinator.stopAndTranscribe()
+        XCTAssertEqual(opened, [firstPage, secondPage])
+        XCTAssertFalse(try String(contentsOf: secondPage, encoding: .utf8).contains("<img src="))
+    }
+
     func testDisabledFluidMeetRejectsRecordingBeforeTouchingCaptureOrStorage() async throws {
         let settings = SettingsStore.shared
         let original = UserDefaults.standard.object(forKey: "FluidMeetEnabled")

@@ -8,6 +8,10 @@ import Foundation
 nonisolated enum MeetingLiveSpeaker: Equatable {
     case you
     case them
+
+    var sourceLabel: String {
+        self == .you ? "Microphone" : "Meeting audio"
+    }
 }
 
 nonisolated enum MeetingLiveAvailability: Equatable {
@@ -31,11 +35,11 @@ nonisolated struct MeetingLivePartial: Equatable, Identifiable {
     var id: UUID
     var text: String
     var start: TimeInterval
+    var end: TimeInterval? = nil
 }
 
-/// In-memory only. Never written into `MeetingSession.transcriptSegments`, so it can never reach
-/// the manifest, Copy Transcript, or Export — those all read a `MeetingSession` value, a type this
-/// struct cannot become.
+/// Live captions have their own HTML transcript. The meeting manifest and final transcript
+/// exports use the results of the post-recording transcription pipeline.
 nonisolated struct MeetingLiveTranscriptSnapshot: Equatable {
     private static let finalizedTurnIDCap = 64
 
@@ -49,6 +53,19 @@ nonisolated struct MeetingLiveTranscriptSnapshot: Equatable {
     private(set) var finalizedTurnIDs: [UUID] = []
 
     static let empty = MeetingLiveTranscriptSnapshot()
+
+    func conversation(through seconds: TimeInterval) -> String {
+        var lines = self.utterances.filter { $0.end <= seconds }
+            .map { (start: $0.start, source: $0.speaker.sourceLabel, text: $0.text) }
+        let finalIDs = Set(self.utterances.map(\.id))
+        lines += self.partials.compactMap { speaker, partial in
+            guard (partial.end ?? partial.start) <= seconds, !finalIDs.contains(partial.id) else { return nil }
+            return (partial.start, speaker.sourceLabel, partial.text)
+        }
+        return lines.sorted { $0.start < $1.start }.map { line in
+            "[\(MeetingTranscriptExporter.timestampText(line.start))] \(line.source): \(line.text)"
+        }.joined(separator: "\n")
+    }
 
     /// Old callbacks must neither roll back this session nor repopulate a stopped/new session.
     func accepts(_ update: Self, generation: UUID, activeGeneration: UUID?) -> Bool {
@@ -147,17 +164,19 @@ nonisolated enum MeetingLiveTimeConversion {
     }
 }
 
-/// Thread-safe, set-once-per-session capture origin shared by both source tracks so their
-/// timestamps land on the same clock.
+/// Shared by both audio tracks and the HTML transcript. Late startup buffers can move
+/// the origin earlier until the first caption uses it.
 final nonisolated class MeetingLiveOriginBox: @unchecked Sendable {
     private let lock = NSLock()
     private var origin: CMTime?
+    private var hasTimestampedCaption = false
 
     @discardableResult
     func establish(_ pts: CMTime) -> CMTime {
         self.lock.lock()
         defer { self.lock.unlock() }
         if let existing = self.origin {
+            if self.hasTimestampedCaption { return existing }
             let earliest = min(pts, existing)
             self.origin = earliest
             return earliest
@@ -170,6 +189,13 @@ final nonisolated class MeetingLiveOriginBox: @unchecked Sendable {
         self.lock.lock()
         defer { self.lock.unlock() }
         return self.origin
+    }
+
+    func originForCaption() -> CMTime? {
+        self.lock.withLock {
+            if self.origin != nil { self.hasTimestampedCaption = true }
+            return self.origin
+        }
     }
 }
 

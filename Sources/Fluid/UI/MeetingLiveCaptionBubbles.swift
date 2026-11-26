@@ -133,7 +133,7 @@ struct MeetingLiveBubbleRow: View, Equatable {
     }
 
     private var sourceLabel: String {
-        self.isMicrophone ? "Microphone" : "Meeting audio"
+        self.row.speaker.sourceLabel
     }
 
     /// Distinguish capture sources without claiming that either source belongs to a person.

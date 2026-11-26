@@ -1,4 +1,5 @@
 import AppKit
+import CoreMedia
 import ImageIO
 import ScreenCaptureKit
 import UniformTypeIdentifiers
@@ -15,6 +16,7 @@ final class ScreenshotCapture {
         case permissionRequired
         case displayUnavailable
         case windowUnavailable
+        case imageUnavailable
         case imageEncodingFailed
 
         var errorDescription: String? {
@@ -24,7 +26,9 @@ final class ScreenshotCapture {
             case .displayUnavailable:
                 "The main display is unavailable."
             case .windowUnavailable:
-                "Open the selected window or choose a window in Settings → Shortcuts."
+                "Open the selected window or choose a window in Settings → Capture."
+            case .imageUnavailable:
+                "ScreenCaptureKit didn’t return an image."
             case .imageEncodingFailed:
                 "The screenshot could not be saved as a PNG."
             }
@@ -53,7 +57,7 @@ final class ScreenshotCapture {
         }
     }
 
-    func captureFromShortcut() async {
+    func captureFromShortcut(meeting: MeetingSessionCoordinator?) async {
         guard !self.isCapturing else { return }
         self.isCapturing = true
         defer { self.isCapturing = false }
@@ -63,20 +67,23 @@ final class ScreenshotCapture {
         let savedWindow = settings.screenshotWindow
         let outputApp = settings.activeOutputApp
         let shouldLog = settings.captureLogEnabled
+        let meetingID = meeting?.screenshotSessionID
         do {
             guard CGPreflightScreenCaptureAccess() else { throw CaptureError.permissionRequired }
-            let capturesWindow = mode == .window
+            let capturesWindow = mode.needsWindow
             let content = try await SCShareableContent.excludingDesktopWindows(capturesWindow, onScreenWindowsOnly: !capturesWindow)
             let filter: SCContentFilter
             var capturedWindow: ScreenshotWindow?
+            var scrollWindow: SCWindow?
             switch mode {
             case .fullScreen:
                 let mainDisplayID = CGMainDisplayID()
                 guard let display = content.displays.first(where: { $0.displayID == mainDisplayID }) else {
                     throw CaptureError.displayUnavailable
                 }
-                filter = SCContentFilter(display: display, excludingWindows: [])
-            case .window:
+                let overlayID = CaptureAI.shared.panelWindowID
+                filter = SCContentFilter(display: display, excludingWindows: content.windows.filter { $0.windowID == overlayID })
+            case .window, .scrollingWindow:
                 guard let savedWindow else { throw CaptureError.windowUnavailable }
                 let originalApp = NSRunningApplication(processIdentifier: savedWindow.processID)
                 let originalProcessIsRunning = originalApp?.bundleIdentifier == savedWindow.bundleIdentifier
@@ -87,24 +94,46 @@ final class ScreenshotCapture {
                 else { throw CaptureError.windowUnavailable }
                 capturedWindow = match
                 filter = SCContentFilter(desktopIndependentWindow: window)
+                if mode == .scrollingWindow { scrollWindow = window }
             }
 
-            let image = try await Self.captureImage(for: filter)
-            let capturedAt = Date.now
-            let screenshot = try await Self.savePNG(image)
+            let frame: (image: CGImage, hostTime: CMTime, capturedAt: Date)
+            let conversationAtCaptureStart: String?
+            if let scrollWindow {
+                let time = CMClockGetTime(CMClockGetHostTimeClock())
+                let date = Date.now
+                conversationAtCaptureStart = meeting?.screenshotConversation(at: time)
+                frame = try (await ScrollingScreenshot.capture(window: scrollWindow, filter: filter), time, date)
+            } else {
+                conversationAtCaptureStart = nil
+                frame = try await Self.captureFrame(for: filter)
+            }
+            let encoding = Task { try await Self.encodePNG(frame.image) }
+            var addedToMeeting = false
+            if let meetingID {
+                addedToMeeting = meeting?.recordScreenshot(
+                    for: meetingID,
+                    capturedAt: frame.hostTime,
+                    png: encoding,
+                    conversationAtCaptureStart: conversationAtCaptureStart
+                ) ?? false
+            }
+            let png = try await encoding.value
+            let url = try await Self.savePNG(png, capturedAt: frame.capturedAt)
+            if !addedToMeeting { CaptureAI.shared.analyzeScreenshot(at: url, meetingID: nil, conversation: "") }
 
-            if shouldLog { CaptureLog.shared.record(.screenshot(screenshot.png), at: capturedAt) }
+            if shouldLog { CaptureLog.shared.record(.screenshot(png), at: frame.capturedAt) }
 
             if let capturedWindow, capturedWindow != savedWindow,
-               settings.screenshotMode == .window, settings.screenshotWindow == savedWindow
+               settings.screenshotMode.needsWindow, settings.screenshotWindow == savedWindow
             {
                 settings.screenshotWindow = capturedWindow
             }
 
             if let outputApp,
-               case .recoverableFailure = await outputApp.deliverScreenshot(screenshot.png, fileURL: screenshot.url)
+               case .recoverableFailure = await outputApp.deliverScreenshot(png, fileURL: url)
             {
-                self.showPasteFailure(appName: outputApp.name, fileURL: screenshot.url)
+                self.showPasteFailure(appName: outputApp.name, fileURL: url)
             }
         } catch {
             self.showFailure(error)
@@ -112,6 +141,24 @@ final class ScreenshotCapture {
     }
 
     nonisolated static func captureImage(for filter: SCContentFilter) async throws -> CGImage {
+        try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: self.configuration(for: filter))
+    }
+
+    private nonisolated static func captureFrame(for filter: SCContentFilter) async throws -> (image: CGImage, hostTime: CMTime, capturedAt: Date) {
+        let configuration = self.configuration(for: filter)
+        return try await withCheckedThrowingContinuation { continuation in
+            SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration) { image, error in
+                guard let image else {
+                    continuation.resume(throwing: error ?? CaptureError.imageUnavailable)
+                    return
+                }
+                let time = CMClockGetTime(CMClockGetHostTimeClock())
+                continuation.resume(returning: (image, time, .now))
+            }
+        }
+    }
+
+    private nonisolated static func configuration(for filter: SCContentFilter) -> SCStreamConfiguration {
         let configuration = SCStreamConfiguration()
         let scale = CGFloat(filter.pointPixelScale)
         configuration.width = Int((filter.contentRect.width * scale).rounded())
@@ -119,7 +166,7 @@ final class ScreenshotCapture {
         configuration.captureResolution = .best
         configuration.showsCursor = false
         configuration.ignoreShadowsSingleWindow = true
-        return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+        return configuration
     }
 
     private static func windowChoices(in content: SCShareableContent) -> [(window: SCWindow, choice: ScreenshotWindow)] {
@@ -151,20 +198,23 @@ final class ScreenshotCapture {
     }
 
     @concurrent
-    private static func savePNG(_ image: CGImage) async throws -> (png: Data, url: URL) {
+    private static func encodePNG(_ image: CGImage) async throws -> Data {
         let png = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(png, UTType.png.identifier as CFString, 1, nil) else {
             throw CaptureError.imageEncodingFailed
         }
         CGImageDestinationAddImage(destination, image, nil)
         guard CGImageDestinationFinalize(destination) else { throw CaptureError.imageEncodingFailed }
+        return png as Data
+    }
 
-        let timestamp = Date.now.formatted(.iso8601).replacingOccurrences(of: ":", with: "-")
+    @concurrent
+    private static func savePNG(_ png: Data, capturedAt: Date) async throws -> URL {
+        let timestamp = capturedAt.formatted(.iso8601).replacingOccurrences(of: ":", with: "-")
         let filename = "Screenshot \(timestamp) \(UUID().uuidString.prefix(8)).png"
         let url = try self.screenshotFolder().appendingPathComponent(filename)
-        let data = png as Data
-        try data.write(to: url, options: .atomic)
-        return (data, url)
+        try png.write(to: url, options: .atomic)
+        return url
     }
 
     private func showPasteFailure(appName: String, fileURL: URL) {

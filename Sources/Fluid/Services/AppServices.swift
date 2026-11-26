@@ -14,6 +14,7 @@
 //  3. Combined with the 1.5s delay in ContentView for belt-and-suspenders approach
 //
 
+import AppKit
 import Combine
 import Foundation
 
@@ -108,6 +109,11 @@ final class AppServices: ObservableObject {
     private(set) lazy var meetingSummaryGeneration = MeetingSummaryGeneration()
 
     private var _meetingSessionCoordinator: MeetingSessionCoordinator?
+    var meetingScreenshotDestination: MeetingSessionCoordinator? {
+        guard let coordinator = self._meetingSessionCoordinator, coordinator.screenshotSessionID != nil else { return nil }
+        return coordinator
+    }
+
     var meetingSessionCoordinator: MeetingSessionCoordinator {
         if let existing = self._meetingSessionCoordinator {
             return existing
@@ -130,7 +136,8 @@ final class AppServices: ObservableObject {
                 guard CPUArchitecture.isAppleSilicon else {
                     throw MeetingParakeetNemotronRuntimeError.unsupportedArchitecture
                 }
-            }
+            },
+            openHTMLTranscript: { NSWorkspace.shared.open($0) }
         )
         self._meetingSessionCoordinator = coordinator
         self.setupMeetingCoordinatorForwarding()

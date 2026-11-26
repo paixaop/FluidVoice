@@ -1,6 +1,6 @@
 import CoreGraphics
-import Foundation
 @testable import FluidVoice_Debug
+import Foundation
 import XCTest
 
 final class ScreenshotWindowTests: XCTestCase {

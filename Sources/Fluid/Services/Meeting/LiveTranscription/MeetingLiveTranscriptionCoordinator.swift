@@ -38,7 +38,7 @@ final nonisolated class MeetingLiveTranscriptionCoordinator: @unchecked Sendable
     private var offerCounts: [MeetingAudioTrackKind: Int] = [:]
     /// nil (fail-safe) keeps the echo filter ON; guarded by `stateLock` on both sides.
     private var microphoneCaptureMethod: MeetingAudioTrackCaptureMethod?
-    private let originBox = MeetingLiveOriginBox()
+    let captureOrigin = MeetingLiveOriginBox()
     private let onUpdate: @Sendable (MeetingLiveTranscriptSnapshot) -> Void
 
     #if arch(arm64)
@@ -48,6 +48,10 @@ final nonisolated class MeetingLiveTranscriptionCoordinator: @unchecked Sendable
 
     init(onUpdate: @escaping @Sendable (MeetingLiveTranscriptSnapshot) -> Void) {
         self.onUpdate = onUpdate
+    }
+
+    func currentSnapshot() -> MeetingLiveTranscriptSnapshot {
+        self.stateLock.withLock { self.snapshot }
     }
 
     func attachComparisonProbe(_ probe: MeetingAudioComparisonProbe) {
@@ -118,12 +122,12 @@ final nonisolated class MeetingLiveTranscriptionCoordinator: @unchecked Sendable
     /// The capture-tee entry point. Copies PCM only for an active engine, then hands it to the
     /// track's bounded queue — never retains the `CMSampleBuffer` beyond this call.
     func offer(kind: MeetingAudioTrackKind, sampleBuffer: CMSampleBuffer) {
-        #if arch(arm64)
         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-        self.recordProbe("live-audio-offered", kind: kind, pts: pts.seconds)
         guard pts.isNumeric else { return }
         // Keep the shared capture clock even when this track has no caption engine.
-        self.originBox.establish(pts)
+        self.captureOrigin.establish(pts)
+        #if arch(arm64)
+        self.recordProbe("live-audio-offered", kind: kind, pts: pts.seconds)
         guard self.stateLock.withLock({ kind == .microphone ? self.microphoneEngine != nil : self.applicationEngine != nil }) else { return }
         guard let sample = MeetingLiveSampleCopy.copy(sampleBuffer) else {
             self.recordProbe("live-sample-copy-failed", kind: kind, pts: pts.seconds)
@@ -191,17 +195,22 @@ final nonisolated class MeetingLiveTranscriptionCoordinator: @unchecked Sendable
     }
 
     private func handlePartial(kind: MeetingAudioTrackKind, id: UUID, text: String, start: CMTime, end: CMTime) {
-        guard let origin = self.originBox.current else { return }
+        guard let origin = self.captureOrigin.originForCaption() else { return }
         let startSeconds = MeetingLiveTimeConversion.sessionSeconds(pts: start, origin: origin)
         let speaker = Self.speaker(for: kind)
         self.recordProbe("partial-before-display", kind: kind, pts: startSeconds, text: text)
-        let partial = MeetingLivePartial(id: id, text: text, start: startSeconds)
+        let partial = MeetingLivePartial(
+            id: id,
+            text: text,
+            start: startSeconds,
+            end: MeetingLiveTimeConversion.sessionSeconds(pts: end, origin: origin)
+        )
         self.publish { $0.settingPartial(partial, for: speaker) }
     }
 
     /// Not `private`: Phase 4 tests drive it directly, predating the solidify UUID — hence the default.
     func handleUtterance(kind: MeetingAudioTrackKind, id: UUID = UUID(), text: String, start: CMTime, end: CMTime) {
-        guard let origin = self.originBox.current else { return }
+        guard let origin = self.captureOrigin.originForCaption() else { return }
         let startSeconds = MeetingLiveTimeConversion.sessionSeconds(pts: start, origin: origin)
         let endSeconds = MeetingLiveTimeConversion.sessionSeconds(pts: end, origin: origin)
         let speaker = Self.speaker(for: kind)

@@ -1,4 +1,5 @@
 import Combine
+import CoreMedia
 import Darwin
 import Foundation
 
@@ -145,6 +146,9 @@ final class MeetingSessionCoordinator: ObservableObject {
     }
 
     private var liveTranscriptionCoordinator: MeetingLiveTranscriptionCoordinator?
+    private var meetingHTMLTranscript: MeetingHTMLTranscript?
+    private var pendingMeetingScreenshot: Task<Void, Never>?
+    private let openHTMLTranscript: (@MainActor (URL) -> Bool)?
     private var startupTrackHealth: [MeetingAudioTrackID: MeetingTrackHealth] = [:]
     private var startupWriterFailures: Set<MeetingAudioTrackID?> = []
     private var captureGeneration: UUID?
@@ -213,7 +217,8 @@ final class MeetingSessionCoordinator: ObservableObject {
         audioArbiter: any MeetingAudioActivityArbitrating,
         preferredMicrophoneUID: @escaping @MainActor () -> String? = { nil },
         validateRecordingModels: @escaping @MainActor () async throws -> Void = {},
-        processingLogger: @escaping @MainActor (String) -> Void = { DebugLogger.shared.info($0, source: "MeetingSessionCoordinator") }
+        processingLogger: @escaping @MainActor (String) -> Void = { DebugLogger.shared.info($0, source: "MeetingSessionCoordinator") },
+        openHTMLTranscript: (@MainActor (URL) -> Bool)? = nil
     ) {
         self.store = store
         self.persistence = MeetingSessionPersistenceQueue(store: store)
@@ -223,6 +228,7 @@ final class MeetingSessionCoordinator: ObservableObject {
         self.preferredMicrophoneUID = preferredMicrophoneUID
         self.validateRecordingModels = validateRecordingModels
         self.processingLogger = processingLogger
+        self.openHTMLTranscript = openHTMLTranscript
     }
 
     var currentSession: MeetingSession? {
@@ -465,6 +471,9 @@ final class MeetingSessionCoordinator: ObservableObject {
                     else { return }
                     if snapshot.hasNewWords(since: self.liveTranscript) { self.lastLiveSpeechAt = Date() }
                     self.liveTranscript = snapshot
+                    if let transcript = self.meetingHTMLTranscript {
+                        Task { await transcript.update(snapshot) }
+                    }
                 }
             }
             CFRunLoopWakeUp(CFRunLoopGetMain())
@@ -527,10 +536,25 @@ final class MeetingSessionCoordinator: ObservableObject {
                 self.degradeReason = hasOtherDegradedTrack ? .sticky : (self.degradeReason ?? .startupWriterFailure)
             }
             session.updatedAt = Date()
+            let transcript = self.openHTMLTranscript.map { _ in
+                MeetingHTMLTranscript(
+                    title: session.title,
+                    startedAt: session.startedAt,
+                    directory: sessionDirectory,
+                    captureOrigin: liveTranscriptionCoordinator.captureOrigin,
+                    startedHostTime: CMClockMakeHostTimeFromSystemUnits(session.timebase.startedHostTime)
+                )
+            }
+            self.meetingHTMLTranscript = transcript
             self.activeSession = session
             self.trackHealth = Dictionary(uniqueKeysWithValues: session.audioTracks.map { ($0.kind, $0.health) })
             self.state = startedDegraded ? .recordingDegraded(session.id) : .recording(session.id)
             try await self.store.save(session)
+            if let transcript {
+                do { try await transcript.start(with: liveTranscriptionCoordinator.currentSnapshot()) } catch {
+                    DebugLogger.shared.warning("Could not create the meeting HTML transcript: \(error.localizedDescription)", source: "MeetingSessionCoordinator")
+                }
+            }
             guard self.startReservation == reservation,
                   self.operationGeneration == generation, !Task.isCancelled
             else {
@@ -1605,7 +1629,7 @@ final class MeetingSessionCoordinator: ObservableObject {
         } else {
             await self.capture.shutdownForTermination()
         }
-        await self.tearDownLiveTranscription()
+        await self.tearDownLiveTranscription(stoppedAt: session.endedAt)
 
         let retainedResult = Self.restoringCompletedResult(session)
         session = retainedResult ?? session
@@ -1690,7 +1714,7 @@ final class MeetingSessionCoordinator: ObservableObject {
             await self.handleStopFailure(error, session: session, generation: generation)
             throw error
         }
-        await self.tearDownLiveTranscription()
+        await self.tearDownLiveTranscription(stoppedAt: stopResult.stoppedAt, opensHTMLTranscript: self.operationGeneration == generation)
         guard self.operationGeneration == generation, !Task.isCancelled else {
             throw CancellationError()
         }
@@ -1859,6 +1883,7 @@ final class MeetingSessionCoordinator: ObservableObject {
             await self.flushQueuedPersistence()
             try await self.store.save(session)
             self.removeCheckpoint(sessionDirectory: sessionDirectory)
+            CaptureAI.shared.summarize(session, directory: sessionDirectory)
             self.activeSession = nil
             self.latestCompletedSession = session
             self.state = .completed(session.id)
@@ -2132,7 +2157,7 @@ final class MeetingSessionCoordinator: ObservableObject {
             }
             session.failures.append(Self.failure(from: error, domain: .capture, recoverable: true))
         }
-        await self.tearDownLiveTranscription()
+        await self.tearDownLiveTranscription(stoppedAt: session.endedAt, opensHTMLTranscript: true)
         guard self.terminationTask == nil, !Task.isCancelled else { return }
 
         session.state = .interrupted
@@ -2165,7 +2190,7 @@ final class MeetingSessionCoordinator: ObservableObject {
             await self.capture.shutdownForTermination()
             session.endedAt = session.endedAt ?? Date()
         }
-        await self.tearDownLiveTranscription()
+        await self.tearDownLiveTranscription(stoppedAt: session.endedAt, opensHTMLTranscript: true)
         let failure = Self.failure(from: error, domain: .capture, recoverable: true)
         session.failures.append(failure)
         session.events.append(MeetingSessionEvent(
@@ -2196,15 +2221,6 @@ final class MeetingSessionCoordinator: ObservableObject {
         await self.persistence.flush()
     }
 
-    /// Must complete before any code path that calls into `processing.process`, so both live
-    /// engines' CoreML models are released before the batch pipeline's `ensureAsrReady()` loads.
-    private func tearDownLiveTranscription() async {
-        guard let coordinator = self.liveTranscriptionCoordinator else { return }
-        self.liveTranscriptionCoordinator = nil
-        await coordinator.stop()
-        self.liveTranscript = .empty
-    }
-
     private func releaseActivityLease() async {
         guard let lease = self.activityLease else { return }
         #if DEBUG
@@ -2213,32 +2229,6 @@ final class MeetingSessionCoordinator: ObservableObject {
         #endif
         await self.audioArbiter.release(lease)
         self.activityLease = nil
-    }
-
-    /// Only called after the completed session save succeeds; on failure the checkpoint stays so a
-    /// retry can resume from it.
-    private func removeCheckpoint(sessionDirectory: URL) {
-        let url = sessionDirectory.appendingPathComponent("checkpoint.json", isDirectory: false)
-        guard FileManager.default.fileExists(atPath: url.path) else { return }
-        do {
-            try FileManager.default.removeItem(at: url)
-        } catch {
-            DebugLogger.shared.warning(
-                "Failed to remove meeting checkpoint after completion: \(error)",
-                source: "MeetingSessionCoordinator"
-            )
-        }
-    }
-
-    private static func makeTimebase() -> MeetingTimebaseMetadata {
-        var info = mach_timebase_info_data_t()
-        mach_timebase_info(&info)
-        return MeetingTimebaseMetadata(
-            startedHostTime: mach_absolute_time(),
-            machTimebaseNumerator: info.numer,
-            machTimebaseDenominator: info.denom,
-            firstPresentationTime: nil
-        )
     }
 
     private static func pendingProcessingAttempt() -> MeetingProcessingAttempt {
@@ -2344,6 +2334,98 @@ final class MeetingSessionCoordinator: ObservableObject {
             code: "\(nsError.domain).\(nsError.code)",
             message: message ?? error.localizedDescription,
             recoverable: recoverable
+        )
+    }
+}
+
+extension MeetingSessionCoordinator {
+    var screenshotSessionID: MeetingSessionID? {
+        guard self.isRecording, self.meetingHTMLTranscript != nil else { return nil }
+        return self.activeSession?.id
+    }
+
+    func screenshotConversation(at hostTime: CMTime) -> String {
+        guard UserDefaults.standard.bool(forKey: CaptureAI.analyzeKey),
+              let live = self.liveTranscriptionCoordinator, let start = live.captureOrigin.current
+        else { return "" }
+        let elapsed = MeetingLiveTimeConversion.sessionSeconds(pts: hostTime, origin: start)
+        return live.currentSnapshot().conversation(through: elapsed)
+    }
+
+    @discardableResult
+    func recordScreenshot(
+        for sessionID: MeetingSessionID,
+        capturedAt hostTime: CMTime,
+        png: Task<Data, Error>,
+        conversationAtCaptureStart: String? = nil
+    ) -> Bool {
+        guard self.screenshotSessionID == sessionID, let transcript = self.meetingHTMLTranscript else { return false }
+        let shouldAnalyze = UserDefaults.standard.bool(forKey: CaptureAI.analyzeKey)
+        let conversation = conversationAtCaptureStart ?? self.screenshotConversation(at: hostTime)
+        let previous = self.pendingMeetingScreenshot
+        self.pendingMeetingScreenshot = Task {
+            await previous?.value
+            do {
+                if let url = try await transcript.addScreenshot(png.value, capturedAt: hostTime), shouldAnalyze {
+                    CaptureAI.shared.analyzeScreenshot(at: url, meetingID: sessionID, conversation: conversation)
+                }
+            } catch {
+                DebugLogger.shared.warning("Could not add a screenshot to the meeting transcript: \(error.localizedDescription)", source: "MeetingSessionCoordinator")
+            }
+        }
+        return true
+    }
+
+    /// Must complete before any code path that calls into `processing.process`, so both live
+    /// engines' CoreML models are released before the batch pipeline's `ensureAsrReady()` loads.
+    private func tearDownLiveTranscription(stoppedAt: Date? = nil, opensHTMLTranscript: Bool = false) async {
+        let coordinator = self.liveTranscriptionCoordinator
+        let snapshot = coordinator?.currentSnapshot() ?? self.liveTranscript
+        self.liveTranscriptionCoordinator = nil
+        if let transcript = self.meetingHTMLTranscript {
+            self.meetingHTMLTranscript = nil
+            let pendingScreenshot = self.pendingMeetingScreenshot
+            self.pendingMeetingScreenshot = nil
+            await pendingScreenshot?.value
+            if let id = self.activeSession?.id { CaptureAI.shared.meetingStopped(id) }
+            do {
+                if let url = try await transcript.finish(with: snapshot, stoppedAt: stoppedAt ?? .now),
+                   opensHTMLTranscript, self.terminationTask == nil, !Task.isCancelled,
+                   self.openHTMLTranscript?(url) == false
+                {
+                    DebugLogger.shared.warning("Could not open the meeting HTML transcript", source: "MeetingSessionCoordinator")
+                }
+            } catch {
+                DebugLogger.shared.warning("Could not finish the meeting HTML transcript: \(error.localizedDescription)", source: "MeetingSessionCoordinator")
+            }
+        }
+        await coordinator?.stop()
+        self.liveTranscript = .empty
+    }
+
+    /// Only called after the completed session save succeeds; on failure the checkpoint stays so a
+    /// retry can resume from it.
+    private func removeCheckpoint(sessionDirectory: URL) {
+        let url = sessionDirectory.appendingPathComponent("checkpoint.json", isDirectory: false)
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        do {
+            try FileManager.default.removeItem(at: url)
+        } catch {
+            DebugLogger.shared.warning(
+                "Failed to remove meeting checkpoint after completion: \(error)",
+                source: "MeetingSessionCoordinator"
+            )
+        }
+    }
+
+    private static func makeTimebase() -> MeetingTimebaseMetadata {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        return MeetingTimebaseMetadata(
+            startedHostTime: mach_absolute_time(),
+            machTimebaseNumerator: info.numer,
+            machTimebaseDenominator: info.denom,
+            firstPresentationTime: nil
         )
     }
 }

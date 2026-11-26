@@ -1963,46 +1963,6 @@ final class GlobalHotkeyManager: NSObject {
         }
     }
 
-    func resetModifierOnlyShortcutTracking(reason: ModifierTrackingResetReason = .shortcutCapture) {
-        self.meetingShortcutPressedKey = nil
-        self.screenshotShortcutPressedKey = nil
-        self.invalidateAllRecordingActions()
-        self.modifierPressReceivedAt = nil
-        self.currentStopPressReceivedAt = nil
-        let shouldStopActiveHold = reason != .cancel && self.hotkeyMode != .toggle
-            && self.asrService.isRunningOrStarting
-            && (self.isKeyPressed || self.isPromptModeKeyPressed || self.isCommandModeKeyPressed || self.isRewriteKeyPressed || self.isPromptAssignmentKeyPressed)
-
-        self.pressedModifierKeyCodes = []
-        self.modifierOnlyKeyDown = false
-        self.activeModifierOnlyType = nil
-        self.otherKeyPressedDuringModifier = false
-        self.modifierPressStartTime = nil
-        self.clearAutomaticPressTracking()
-        self.isKeyPressed = false
-        self.isPromptModeKeyPressed = false
-        self.isCommandModeKeyPressed = false
-        self.isRewriteKeyPressed = false
-        self.isPromptAssignmentKeyPressed = false
-        self.activePromptAssignmentPress = nil
-        self.activeModifierOnlyShortcut = nil
-        self.activePrimaryShortcutPress = nil
-
-        if shouldStopActiveHold {
-            switch reason {
-            case .shortcutCapture:
-                DebugLogger.shared.debug("Shortcut capture active - stopping active hold recording before reset", source: "GlobalHotkeyManager")
-            case .tapDisabled:
-                DebugLogger.shared.warning("Event tap disabled during active hold - stopping recording before reset", source: "GlobalHotkeyManager")
-            case .cancel:
-                break
-            case .reinitialize:
-                DebugLogger.shared.info("Hotkey manager reinitializing - stopping active hold recording before reset", source: "GlobalHotkeyManager")
-            }
-            self.stopRecordingIfNeeded()
-        }
-    }
-
     private func handlePromptModeKeyDown(keyCode: UInt16, modifiers: NSEvent.ModifierFlags, isAutorepeat: Bool) -> Bool {
         guard self.promptModeShortcutEnabled, self.promptModeShortcut.matchesRecordingShortcut(keyCode: keyCode, modifiers: modifiers) else { return false }
         guard !isAutorepeat else { return true }
@@ -2886,6 +2846,46 @@ extension GlobalHotkeyManager {
 }
 
 extension GlobalHotkeyManager {
+    func resetModifierOnlyShortcutTracking(reason: ModifierTrackingResetReason = .shortcutCapture) {
+        self.meetingShortcutPressedKey = nil
+        self.screenshotShortcutPressedKey = nil
+        self.invalidateAllRecordingActions()
+        self.modifierPressReceivedAt = nil
+        self.currentStopPressReceivedAt = nil
+        let shouldStopActiveHold = reason != .cancel && self.hotkeyMode != .toggle
+            && self.asrService.isRunningOrStarting
+            && (self.isKeyPressed || self.isPromptModeKeyPressed || self.isCommandModeKeyPressed || self.isRewriteKeyPressed || self.isPromptAssignmentKeyPressed)
+
+        self.pressedModifierKeyCodes = []
+        self.modifierOnlyKeyDown = false
+        self.activeModifierOnlyType = nil
+        self.otherKeyPressedDuringModifier = false
+        self.modifierPressStartTime = nil
+        self.clearAutomaticPressTracking()
+        self.isKeyPressed = false
+        self.isPromptModeKeyPressed = false
+        self.isCommandModeKeyPressed = false
+        self.isRewriteKeyPressed = false
+        self.isPromptAssignmentKeyPressed = false
+        self.activePromptAssignmentPress = nil
+        self.activeModifierOnlyShortcut = nil
+        self.activePrimaryShortcutPress = nil
+
+        if shouldStopActiveHold {
+            switch reason {
+            case .shortcutCapture:
+                DebugLogger.shared.debug("Shortcut capture active - stopping active hold recording before reset", source: "GlobalHotkeyManager")
+            case .tapDisabled:
+                DebugLogger.shared.warning("Event tap disabled during active hold - stopping recording before reset", source: "GlobalHotkeyManager")
+            case .cancel:
+                break
+            case .reinitialize:
+                DebugLogger.shared.info("Hotkey manager reinitializing - stopping active hold recording before reset", source: "GlobalHotkeyManager")
+            }
+            self.stopRecordingIfNeeded()
+        }
+    }
+
     func setCancelCallback(_ callback: @escaping () -> CancelHandlingResult) {
         self.cancelCallback = callback
     }

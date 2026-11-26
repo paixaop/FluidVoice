@@ -238,6 +238,10 @@ struct SettingsView: View {
                     .settingsSearchTarget(.fluidMeet)
                 }
 
+                if self.selectedSection == .capture {
+                    self.captureSettingsCard
+                }
+
                 // App Settings Card
                 ThemedCard(style: .standard) {
                     VStack(alignment: .leading, spacing: 14) {
@@ -617,31 +621,6 @@ struct SettingsView: View {
                                                 }
                                             )
                                             .settingsSearchTarget(.meetingRecordingShortcut)
-                                            self.shortcutGroupDivider
-
-                                            VStack(alignment: .leading, spacing: 10) {
-                                                self.shortcutRow(
-                                                    content: .init(
-                                                        icon: "camera.viewfinder",
-                                                        iconColor: .secondary,
-                                                        title: "Take Screenshot",
-                                                        description: "Save a PNG to Pictures/\(ScreenshotCapture.folderName)"
-                                                    ),
-                                                    shortcut: self.settings.screenshotHotkeyShortcut,
-                                                    isRecording: self.isRecording(.screenshot),
-                                                    isAnyRecordingActive: self.isRecordingAnyShortcut,
-                                                    recordingMessage: self.isRecording(.screenshot) ? self.shortcutRecordingMessage : nil,
-                                                    onChangePressed: {
-                                                        self.shortcutRecordingMessage = nil
-                                                        self.activeShortcutRecordingTarget = .screenshot
-                                                    },
-                                                    onRemovePressed: { self.settings.screenshotHotkeyShortcut = nil }
-                                                )
-                                                ScreenshotShortcutSettings(settings: self.settings)
-                                                    .padding(.leading, 30)
-                                                    .disabled(self.isRecordingAnyShortcut)
-                                            }
-                                            .settingsSearchTarget(.screenshotShortcut)
                                         }
                                     }
                                 }
@@ -781,14 +760,6 @@ struct SettingsView: View {
                                             .frame(minWidth: 170, alignment: .trailing)
                                         }
                                         .settingsSearchTarget(.textInsertionMode)
-                                        Divider().opacity(0.2)
-
-                                        self.outputAppSettings
-                                            .settingsSearchTarget(.outputApp)
-                                        Divider().opacity(0.2)
-
-                                        self.captureLogSettings
-                                            .settingsSearchTarget(.captureLog)
                                         Divider().opacity(0.2)
 
                                         self.spokenSendSettings
@@ -1970,71 +1941,6 @@ struct SettingsView: View {
         return min(1, Double(self.audioHistoryUsageBytes) / Double(budget))
     }
 
-    private var captureLogSettings: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            self.optionToggleRow(
-                title: "Keep an HTML Capture Log",
-                description: "Append screenshots and new dictation to a local page in Pictures/\(CaptureLogWriter.folderName).",
-                isOn: self.$settings.captureLogEnabled
-            )
-
-            Button("Open Capture Log") { self.captureLog.openPage() }
-                .fluidOutlinedButton()
-
-            if let error = self.captureLog.errorMessage {
-                Text(error)
-                    .font(self.theme.typography.bodySmall)
-                    .foregroundStyle(self.theme.palette.warning)
-            }
-        }
-    }
-
-    private var outputAppSettings: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            self.optionToggleRow(
-                title: "Always Paste Into App",
-                description: "Paste screenshots and new dictation transcripts into the chosen app for review before sending.",
-                isOn: self.$settings.outputAppEnabled
-            )
-            .disabled(self.settings.outputApp == nil)
-
-            HStack(spacing: 10) {
-                Button(self.settings.outputApp == nil ? "Choose App…" : "Change App…") {
-                    self.chooseOutputApp()
-                }
-                .fluidOutlinedButton()
-
-                if let app = self.settings.outputApp {
-                    Text(app.name)
-                        .foregroundStyle(self.settingsSecondaryText)
-                        .lineLimit(1)
-                }
-            }
-            .font(self.theme.typography.bodySmall)
-
-            if let error = self.outputAppPickerError {
-                Text(error)
-                    .font(self.theme.typography.bodySmall)
-                    .foregroundStyle(self.theme.palette.warning)
-            }
-        }
-    }
-
-    private func chooseOutputApp() {
-        let panel = NSOpenPanel()
-        panel.title = "Choose Output App"
-        panel.prompt = "Choose App"
-        panel.allowedContentTypes = [.application]
-        panel.directoryURL = URL(fileURLWithPath: "/Applications", isDirectory: true)
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        guard let app = ConfiguredOutputApp(applicationURL: url) else {
-            self.outputAppPickerError = "Choose another installed app."
-            return
-        }
-        self.settings.outputApp = app
-        self.outputAppPickerError = nil
-    }
-
     private func optionToggleRow(
         title: String,
         description: String,
@@ -2246,6 +2152,134 @@ struct SettingsView: View {
         .disabled(self.isRecordingAnyShortcut)
         .accessibilityLabel("Auto-send for \(shortcut.displayString)")
         .help("Insert dictation, then press your send key after 1 second. Press Escape to cancel sending.")
+    }
+}
+
+extension SettingsView {
+    private var captureSettingsCard: some View {
+        ThemedCard(style: .standard) {
+            VStack(alignment: .leading, spacing: 14) {
+                Label(SettingsSection.capture.title, systemImage: SettingsSection.capture.systemImage)
+                    .font(.fluidSystem(.headline))
+                    .foregroundStyle(.primary)
+
+                if !self.accessibilityEnabled {
+                    HStack {
+                        Text("Enable Accessibility to use the screenshot shortcut and paste into apps.")
+                            .font(self.theme.typography.bodySmall)
+                            .foregroundStyle(self.settingsSecondaryText)
+                        Spacer()
+                        Button("Open Accessibility Settings") { self.openAccessibilitySettings() }
+                            .fluidOutlinedButton()
+                    }
+                }
+
+                self.screenshotSettings
+                    .settingsSearchTarget(.screenshotShortcut)
+                Divider().opacity(0.2)
+                self.outputAppSettings
+                    .settingsSearchTarget(.outputApp)
+                Divider().opacity(0.2)
+                self.captureLogSettings
+                    .settingsSearchTarget(.captureLog)
+                Divider().opacity(0.2)
+                CaptureAISettings()
+                    .settingsSearchTarget(.captureAI)
+            }
+            .padding(16)
+        }
+    }
+
+    private var screenshotSettings: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            self.shortcutRow(
+                content: .init(
+                    icon: "camera.viewfinder",
+                    iconColor: .secondary,
+                    title: "Take Screenshot",
+                    description: "Save a PNG to Pictures/\(ScreenshotCapture.folderName). During a meeting recording, the screenshot also appears in the meeting’s HTML transcript."
+                ),
+                shortcut: self.settings.screenshotHotkeyShortcut,
+                isRecording: self.isRecording(.screenshot),
+                isAnyRecordingActive: self.isRecordingAnyShortcut,
+                recordingMessage: self.isRecording(.screenshot) ? self.shortcutRecordingMessage : nil,
+                onChangePressed: {
+                    self.shortcutRecordingMessage = nil
+                    self.activeShortcutRecordingTarget = .screenshot
+                },
+                onRemovePressed: { self.settings.screenshotHotkeyShortcut = nil }
+            )
+            .disabled(!self.accessibilityEnabled)
+
+            ScreenshotShortcutSettings(settings: self.settings)
+                .padding(.leading, 30)
+                .disabled(self.isRecordingAnyShortcut)
+        }
+    }
+
+    private var captureLogSettings: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            self.optionToggleRow(
+                title: "Keep an HTML Capture Log",
+                description: "Append screenshots and new dictation to a local page in Pictures/\(CaptureLogWriter.folderName).",
+                isOn: self.$settings.captureLogEnabled
+            )
+
+            Button("Open Capture Log") { self.captureLog.openPage() }
+                .fluidOutlinedButton()
+
+            if let error = self.captureLog.errorMessage {
+                Text(error)
+                    .font(self.theme.typography.bodySmall)
+                    .foregroundStyle(self.theme.palette.warning)
+            }
+        }
+    }
+
+    private var outputAppSettings: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            self.optionToggleRow(
+                title: "Always Paste Into App",
+                description: "Paste screenshots and new dictation transcripts into the chosen app for review before sending.",
+                isOn: self.$settings.outputAppEnabled
+            )
+            .disabled(self.settings.outputApp == nil)
+
+            HStack(spacing: 10) {
+                Button(self.settings.outputApp == nil ? "Choose App…" : "Change App…") {
+                    self.chooseOutputApp()
+                }
+                .fluidOutlinedButton()
+
+                if let app = self.settings.outputApp {
+                    Text(app.name)
+                        .foregroundStyle(self.settingsSecondaryText)
+                        .lineLimit(1)
+                }
+            }
+            .font(self.theme.typography.bodySmall)
+
+            if let error = self.outputAppPickerError {
+                Text(error)
+                    .font(self.theme.typography.bodySmall)
+                    .foregroundStyle(self.theme.palette.warning)
+            }
+        }
+    }
+
+    private func chooseOutputApp() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose Output App"
+        panel.prompt = "Choose App"
+        panel.allowedContentTypes = [.application]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications", isDirectory: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let app = ConfiguredOutputApp(applicationURL: url) else {
+            self.outputAppPickerError = "Choose another installed app."
+            return
+        }
+        self.settings.outputApp = app
+        self.outputAppPickerError = nil
     }
 }
 
@@ -2716,7 +2750,7 @@ private extension SettingsView {
             await self.prepareAudioSettings()
         case .dictation:
             await self.refreshAudioHistoryUsageInBackground()
-        case .fluidMeet, .dictationFormatting, .shortcuts, .notifications, .overlay, .dataAndDiagnostics, .experimental:
+        case .fluidMeet, .dictationFormatting, .shortcuts, .capture, .notifications, .overlay, .dataAndDiagnostics, .experimental:
             break
         }
     }
