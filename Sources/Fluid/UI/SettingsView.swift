@@ -615,6 +615,31 @@ struct SettingsView: View {
                                                 }
                                             )
                                             .settingsSearchTarget(.meetingRecordingShortcut)
+                                            self.shortcutGroupDivider
+
+                                            VStack(alignment: .leading, spacing: 10) {
+                                                self.shortcutRow(
+                                                    content: .init(
+                                                        icon: "camera.viewfinder",
+                                                        iconColor: .secondary,
+                                                        title: "Take Screenshot",
+                                                        description: "Save a PNG to Pictures/\(ScreenshotCapture.folderName)"
+                                                    ),
+                                                    shortcut: self.settings.screenshotHotkeyShortcut,
+                                                    isRecording: self.isRecording(.screenshot),
+                                                    isAnyRecordingActive: self.isRecordingAnyShortcut,
+                                                    recordingMessage: self.isRecording(.screenshot) ? self.shortcutRecordingMessage : nil,
+                                                    onChangePressed: {
+                                                        self.shortcutRecordingMessage = nil
+                                                        self.activeShortcutRecordingTarget = .screenshot
+                                                    },
+                                                    onRemovePressed: { self.settings.screenshotHotkeyShortcut = nil }
+                                                )
+                                                ScreenshotShortcutSettings(settings: self.settings)
+                                                    .padding(.leading, 30)
+                                                    .disabled(self.isRecordingAnyShortcut)
+                                            }
+                                            .settingsSearchTarget(.screenshotShortcut)
                                         }
                                     }
                                 }

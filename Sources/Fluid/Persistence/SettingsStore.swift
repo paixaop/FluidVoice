@@ -3339,18 +3339,53 @@ final class SettingsStore: ObservableObject {
         get {
             guard let data = self.defaults.data(forKey: Keys.meetingRecordingHotkeyShortcut),
                   let shortcut = try? JSONDecoder().decode(HotkeyShortcut.self, from: data),
-                  shortcut.isMeetingRecordingShortcut else { return nil }
+                  shortcut.isModifiedKeyboardChord else { return nil }
             return shortcut
         }
         set {
             objectWillChange.send()
-            guard let newValue, newValue.isMeetingRecordingShortcut,
+            guard let newValue, newValue.isModifiedKeyboardChord,
                   let data = try? JSONEncoder().encode(newValue)
             else {
                 self.defaults.removeObject(forKey: Keys.meetingRecordingHotkeyShortcut)
                 return
             }
             self.defaults.set(data, forKey: Keys.meetingRecordingHotkeyShortcut)
+        }
+    }
+
+    var screenshotHotkeyShortcut: HotkeyShortcut? {
+        get {
+            guard let data = self.defaults.data(forKey: Keys.screenshotHotkeyShortcut),
+                  let shortcut = try? JSONDecoder().decode(HotkeyShortcut.self, from: data),
+                  shortcut.isModifiedKeyboardChord else { return nil }
+            return shortcut
+        }
+        set {
+            objectWillChange.send()
+            let data = newValue.flatMap { $0.isModifiedKeyboardChord ? try? JSONEncoder().encode($0) : nil }
+            self.defaults.set(data, forKey: Keys.screenshotHotkeyShortcut)
+        }
+    }
+
+    var screenshotMode: ScreenshotMode {
+        get {
+            self.defaults.string(forKey: Keys.screenshotMode).flatMap(ScreenshotMode.init(rawValue:)) ?? .fullScreen
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue.rawValue, forKey: Keys.screenshotMode)
+        }
+    }
+
+    var screenshotWindow: ScreenshotWindow? {
+        get {
+            guard let data = self.defaults.data(forKey: Keys.screenshotWindow) else { return nil }
+            return try? JSONDecoder().decode(ScreenshotWindow.self, from: data)
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue.flatMap { try? JSONEncoder().encode($0) }, forKey: Keys.screenshotWindow)
         }
     }
 
@@ -6258,6 +6293,9 @@ private extension SettingsStore {
         static let cancelRecordingHotkeyShortcut = "CancelRecordingHotkeyShortcut"
         static let pasteLastTranscriptionHotkeyShortcut = "PasteLastTranscriptionHotkeyShortcut"
         static let pasteLastTranscriptionShortcutEnabled = "PasteLastTranscriptionShortcutEnabled"
+        static let screenshotHotkeyShortcut = "ScreenshotHotkeyShortcut"
+        static let screenshotMode = "ScreenshotMode"
+        static let screenshotWindow = "ScreenshotWindow"
         static let commandModeLinkedToGlobal = "CommandModeLinkedToGlobal"
         static let commandModeShortcutEnabled = "CommandModeShortcutEnabled"
 

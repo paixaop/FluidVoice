@@ -162,6 +162,7 @@ enum ShortcutRecordingTarget: Hashable {
     case cancel
     case pasteLast
     case meeting
+    case screenshot
     case dictationPrompt(String)
     case newPrompt
 
@@ -181,6 +182,8 @@ enum ShortcutRecordingTarget: Hashable {
             return "Start / Stop Meeting"
         case .pasteLast:
             return "Paste Last Transcription"
+        case .screenshot:
+            return "Take Screenshot"
         case .dictationPrompt:
             return "Prompt Shortcut"
         case .newPrompt:
@@ -192,7 +195,7 @@ enum ShortcutRecordingTarget: Hashable {
         switch self {
         case .secondaryDictation, .command, .edit, .pasteLast:
             return true
-        case .primaryDictation, .cancel, .meeting, .dictationPrompt, .newPrompt:
+        case .primaryDictation, .cancel, .meeting, .screenshot, .dictationPrompt, .newPrompt:
             return false
         }
     }
@@ -206,9 +209,13 @@ enum ShortcutRecordingTarget: Hashable {
         switch self {
         case .primaryDictation, .pasteLast:
             return true
-        case .secondaryDictation, .command, .edit, .cancel, .meeting, .dictationPrompt, .newPrompt:
+        case .secondaryDictation, .command, .edit, .cancel, .meeting, .screenshot, .dictationPrompt, .newPrompt:
             return false
         }
+    }
+
+    var checksKeyboardModifierPrefixes: Bool {
+        self == .meeting || self == .screenshot
     }
 
     var isPrimaryDictation: Bool {
@@ -1313,8 +1320,11 @@ struct ContentView: View {
         if target == .cancel, shortcut.isModifierOnlyShortcut {
             return "Modifier-only keys can't cancel recording. Use Esc or include a regular key."
         }
-        if target == .meeting, !shortcut.isMeetingRecordingShortcut {
+        if target == .meeting, !shortcut.isModifiedKeyboardChord {
             return "Use a keyboard key with a modifier for meeting recording"
+        }
+        if target == .screenshot, !shortcut.isModifiedKeyboardChord {
+            return "Use a keyboard key with a modifier for screenshots"
         }
         if shortcut.isMouseShortcut {
             guard target.allowsMouseShortcut else {
@@ -1331,7 +1341,7 @@ struct ContentView: View {
             if configuredShortcut.hasSameTrigger(as: shortcut) {
                 return "Duplicate with Primary Dictation Shortcut"
             }
-            if shortcut.conflictsWith(configuredShortcut, includingKeyboardModifierPrefixes: target == .meeting) {
+            if shortcut.conflictsWith(configuredShortcut, includingKeyboardModifierPrefixes: target.checksKeyboardModifierPrefixes) {
                 return "Overlaps Primary Dictation Shortcut — use a different modifier key"
             }
         }
@@ -1351,6 +1361,7 @@ struct ContentView: View {
         }
         let optionalConfiguredShortcuts: [(ShortcutRecordingTarget, HotkeyShortcut?)] = [
             (.meeting, SettingsStore.shared.meetingRecordingHotkeyShortcut),
+            (.screenshot, SettingsStore.shared.screenshotHotkeyShortcut),
             (.cancel, self.cancelRecordingHotkeyShortcut),
         ]
 
@@ -1358,7 +1369,7 @@ struct ContentView: View {
             if configuredShortcut.hasSameTrigger(as: shortcut) {
                 return "Duplicate with \(otherTarget.title)"
             }
-            if shortcut.conflictsWith(configuredShortcut, includingKeyboardModifierPrefixes: target == .meeting || otherTarget == .meeting) {
+            if shortcut.conflictsWith(configuredShortcut, includingKeyboardModifierPrefixes: target.checksKeyboardModifierPrefixes || otherTarget.checksKeyboardModifierPrefixes) {
                 return "Overlaps \(otherTarget.title) — use a different modifier key"
             }
         }
@@ -1367,7 +1378,7 @@ struct ContentView: View {
             if configuredShortcut.hasSameTrigger(as: shortcut) {
                 return "Duplicate with \(otherTarget.title)"
             }
-            if shortcut.conflictsWith(configuredShortcut, includingKeyboardModifierPrefixes: target == .meeting || otherTarget == .meeting) {
+            if shortcut.conflictsWith(configuredShortcut, includingKeyboardModifierPrefixes: target.checksKeyboardModifierPrefixes || otherTarget.checksKeyboardModifierPrefixes) {
                 return "Overlaps \(otherTarget.title) — use a different modifier key"
             }
         }
@@ -1382,7 +1393,7 @@ struct ContentView: View {
             if assignment.shortcut.hasSameTrigger(as: shortcut) {
                 return "Duplicate with Prompt Shortcut"
             }
-            if shortcut.conflictsWith(assignment.shortcut, includingKeyboardModifierPrefixes: target == .meeting) {
+            if shortcut.conflictsWith(assignment.shortcut, includingKeyboardModifierPrefixes: target.checksKeyboardModifierPrefixes) {
                 return "Overlaps Prompt Shortcut — use a different modifier key"
             }
         }
@@ -1416,6 +1427,8 @@ struct ContentView: View {
             self.hotkeyManager?.updateRewriteModeShortcut(shortcut)
         case .meeting:
             SettingsStore.shared.meetingRecordingHotkeyShortcut = shortcut
+        case .screenshot:
+            SettingsStore.shared.screenshotHotkeyShortcut = shortcut
         case .cancel:
             self.cancelRecordingHotkeyShortcut = shortcut
             SettingsStore.shared.cancelRecordingHotkeyShortcut = shortcut
@@ -1470,7 +1483,7 @@ struct ContentView: View {
         case .pasteLast:
             self.isPasteLastTranscriptionShortcutEnabled = enabled
             SettingsStore.shared.pasteLastTranscriptionShortcutEnabled = enabled
-        case .primaryDictation, .cancel, .meeting, .dictationPrompt, .newPrompt:
+        case .primaryDictation, .cancel, .meeting, .screenshot, .dictationPrompt, .newPrompt:
             break
         }
     }
@@ -5297,6 +5310,9 @@ struct ContentView: View {
         // Re-insert the most recent transcription on demand (no clipboard involved).
         self.hotkeyManager?.setPasteLastTranscriptionCallback {
             self.pasteLastDictationFromHistory()
+        }
+        self.hotkeyManager?.setScreenshotCallback {
+            Task { await ScreenshotCapture.shared.captureFromShortcut() }
         }
 
         // Monitor initialization status

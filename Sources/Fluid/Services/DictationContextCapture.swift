@@ -498,14 +498,7 @@ nonisolated enum DictationContextReader {
                   let scWindow = content.windows.first(where: { $0.windowID == windowID })
             else { return nil }
             let filter = SCContentFilter(desktopIndependentWindow: scWindow)
-            let configuration = SCStreamConfiguration()
-            let scale = CGFloat(filter.pointPixelScale)
-            configuration.width = Int((filter.contentRect.width * scale).rounded())
-            configuration.height = Int((filter.contentRect.height * scale).rounded())
-            configuration.captureResolution = .best
-            configuration.showsCursor = false
-            configuration.ignoreShadowsSingleWindow = true
-            let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+            let image = try await ScreenshotCapture.captureImage(for: filter)
             return Task.isCancelled ? nil : image
         } catch {
             return nil
