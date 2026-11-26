@@ -1291,15 +1291,21 @@ struct ContentView: View {
     }
 
     private func selectSettingsSection(_ section: SettingsSection) {
-        if self.settingsNavigation.isLeaving(.shortcuts, for: section) {
-            self.clearShortcutRecordingMode()
-        }
-        self.settingsNavigation.selectedSection = section
+        self.setSettingsSection(section)
         if self.isSidebarCollapsed {
             self.resetSettingsSearch()
         } else {
             self.settingsSearchScrollRequest += 1
         }
+    }
+
+    private func setSettingsSection(_ section: SettingsSection?) {
+        if self.settingsNavigation.isLeaving(.shortcuts, for: section)
+            || self.settingsNavigation.isLeaving(.capture, for: section)
+        {
+            self.clearShortcutRecordingMode()
+        }
+        self.settingsNavigation.selectedSection = section
     }
 
     private func resetSettingsSearch() {
@@ -1793,10 +1799,10 @@ struct ContentView: View {
 
         guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let results = self.availableSettingsSearchResults(for: query)
-        self.settingsNavigation.selectedSection = SettingsSearchIndex.preferredSection(
+        self.setSettingsSection(SettingsSearchIndex.preferredSection(
             current: self.settingsNavigation.selectedSection,
             results: results
-        )
+        ))
     }
 
     private func availableSettingsSearchResults(for query: String) -> [SettingsSearchResult] {
@@ -5328,7 +5334,7 @@ struct ContentView: View {
             self.pasteLastDictationFromHistory()
         }
         self.hotkeyManager?.setScreenshotCallback {
-            Task { await ScreenshotCapture.shared.captureFromShortcut() }
+            Task { await ScreenshotCapture.shared.captureFromShortcut(meeting: self.appServices.meetingScreenshotDestination) }
         }
 
         // Monitor initialization status

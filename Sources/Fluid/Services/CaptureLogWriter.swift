@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 
 actor CaptureLogWriter {
-    enum Entry: Sendable {
+    enum Entry {
         case transcript(String)
         case screenshot(Data)
     }
@@ -12,10 +12,11 @@ actor CaptureLogWriter {
 
     private let folder: URL
 
-    init(folder: URL = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Pictures", isDirectory: true)
-        .appendingPathComponent(CaptureLogWriter.folderName, isDirectory: true))
-    {
+    init(
+        folder: URL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Pictures", isDirectory: true)
+            .appendingPathComponent(CaptureLogWriter.folderName, isDirectory: true)
+    ) {
         self.folder = folder
     }
 
@@ -46,7 +47,7 @@ actor CaptureLogWriter {
             switch entry {
             case let .transcript(text):
                 title = "Dictation"
-                content = "<p class=\"transcript\">\(Self.escape(text))</p>"
+                content = "<p class=\"transcript\">\(HTMLText.escape(text))</p>"
             case let .screenshot(png):
                 title = "Screenshot"
                 let images = self.folder.appendingPathComponent("images", isDirectory: true)
@@ -60,7 +61,7 @@ actor CaptureLogWriter {
             }
 
             let isoDate = timestamp.formatted(Date.ISO8601FormatStyle(includingFractionalSeconds: true))
-            let label = Self.escape(timestamp.formatted(date: .abbreviated, time: .standard))
+            let label = HTMLText.escape(timestamp.formatted(date: .abbreviated, time: .standard))
             let item = """
 
                  <li><article id="entry-\(id)">
@@ -92,12 +93,6 @@ actor CaptureLogWriter {
             guard errno == EINTR else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         }
         return try operation(self.folder.appendingPathComponent(Self.pageName))
-    }
-
-    private static func escape(_ text: String) -> String {
-        text.replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
     }
 
     private static let documentMarker = "<!doctype html>\n<!-- FluidVoice Capture Log -->"

@@ -31,6 +31,7 @@ enum SettingsSearchTarget: Hashable {
     case cancelRecordingShortcut
     case pasteLastTranscriptionShortcut
     case meetingRecordingShortcut
+    case capture
     case screenshotShortcut
     case activationMode
     case holdSpaceToMute
@@ -38,6 +39,7 @@ enum SettingsSearchTarget: Hashable {
     case textInsertionMode
     case outputApp
     case captureLog
+    case captureAI
     case spokenSend
     case transcriptionHistory
     case audioHistory
@@ -99,8 +101,6 @@ enum SettingsSearchTarget: Hashable {
              .holdSpaceToMute,
              .copyToClipboard,
              .textInsertionMode,
-             .outputApp,
-             .captureLog,
              .spokenSend,
              .transcriptionHistory,
              .audioHistory,
@@ -117,8 +117,11 @@ enum SettingsSearchTarget: Hashable {
 
         case .shortcuts, .globalHotkey, .primaryDictationShortcuts,
              .commandModeShortcut, .editModeShortcut, .cancelRecordingShortcut,
-             .pasteLastTranscriptionShortcut, .meetingRecordingShortcut, .screenshotShortcut:
+             .pasteLastTranscriptionShortcut, .meetingRecordingShortcut:
             return .shortcuts
+
+        case .capture, .screenshotShortcut, .outputApp, .captureLog, .captureAI:
+            return .capture
 
         case .notifications, .aiEnhancementFailures, .microphoneChanges, .pasteCheck:
             return .notifications
@@ -152,6 +155,7 @@ extension SettingsSection {
         case .dictation: return .dictation
         case .dictationFormatting: return .textFormatting
         case .shortcuts: return .shortcuts
+        case .capture: return .capture
         case .notifications: return .notifications
         case .audio: return .audio
         case .overlay: return .overlay
@@ -206,12 +210,9 @@ struct SettingsSearchAvailability {
              .cancelRecordingShortcut,
              .pasteLastTranscriptionShortcut,
              .meetingRecordingShortcut,
-             .screenshotShortcut,
              .activationMode,
              .copyToClipboard,
              .textInsertionMode,
-             .outputApp,
-             .captureLog,
              .spokenSend,
              .transcriptionHistory,
              .audioHistory,
@@ -310,7 +311,8 @@ enum SettingsSearchIndex {
             terms: ["reinsert recent text hotkey shortcut clipboard"]
         ),
         .init(target: .meetingRecordingShortcut, title: "Meeting Recording Shortcut", terms: ["FluidMeet start stop toggle recording keyboard hotkey"]),
-        .init(target: .screenshotShortcut, title: "Take Screenshot", terms: ["screen capture window display keyboard hotkey PNG"]),
+        .init(target: .capture, title: "Capture", terms: ["screenshot settings"]),
+        .init(target: .screenshotShortcut, title: "Take Screenshot", terms: ["screen capture window display keyboard hotkey PNG meeting transcript"]),
         .init(target: .activationMode, title: "Activation Mode", terms: ["hold toggle hotkey behavior"]),
         .init(target: .holdSpaceToMute, title: "Hold Space to Mute", terms: ["pause microphone spacebar resume silence"]),
         .init(
@@ -325,6 +327,7 @@ enum SettingsSearchIndex {
         ),
         .init(target: .outputApp, title: "Always Paste Into App", terms: ["destination ChatGPT screenshots dictation output app"]),
         .init(target: .captureLog, title: "Keep an HTML Capture Log", terms: ["screenshots dictation transcript HTML timeline export"]),
+        .init(target: .captureAI, title: "Screenshot and Meeting Analysis", terms: ["OpenAI ChatGPT OAuth image prompt edit summary prompt"]),
         .init(
             target: .spokenSend,
             title: "Spoken Send",

@@ -153,7 +153,7 @@ final class SettingsNavigationStateTests: XCTestCase {
     func testSettingsSectionsHaveStableTitlesAndIcons() {
         XCTAssertEqual(
             SettingsSection.allCases.map(\.title),
-            ["General", "FluidMeet Settings", "Dictation", "Dictation Formatting", "Shortcuts", "Notifications", "Audio", "Overlay", "Data & Diagnostics", "Experimental"]
+            ["General", "FluidMeet Settings", "Dictation", "Dictation Formatting", "Shortcuts", "Capture", "Notifications", "Audio", "Overlay", "Data & Diagnostics", "Experimental"]
         )
         XCTAssertTrue(SettingsSection.allCases.allSatisfy { !$0.systemImage.isEmpty })
         XCTAssertEqual(SettingsSection.overlay.systemImage, "rectangle.on.rectangle")
@@ -167,6 +167,12 @@ final class SettingsNavigationStateTests: XCTestCase {
         state.present(.shortcuts, returningTo: .cleanupStyles)
         XCTAssertTrue(state.isLeaving(.shortcuts, for: .dictation))
         XCTAssertEqual(state.dismiss(), .cleanupStyles)
+    }
+
+    func testSearchRoutesCaptureSettingsToTheSameSection() {
+        XCTAssertEqual(SettingsSearchIndex.results(for: "Take Screenshot").first?.section, .capture)
+        XCTAssertEqual(SettingsSearchIndex.results(for: "Always Paste Into App").first?.section, .capture)
+        XCTAssertEqual(SettingsSearchIndex.results(for: "Keep an HTML Capture Log").first?.section, .capture)
     }
 
     func testFormattingSearchRoutesToDedicatedSection() {

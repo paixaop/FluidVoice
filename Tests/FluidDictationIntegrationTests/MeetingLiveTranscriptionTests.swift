@@ -5,6 +5,109 @@ import Foundation
 import XCTest
 
 @MainActor
+final class MeetingHTMLTranscriptTests: XCTestCase {
+    func testUpdatesDuringRecordingAndSealsTheLatestCaptionsAtStop() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let start = Date(timeIntervalSince1970: 0)
+        let writer = MeetingHTMLTranscript(
+            title: "A < B & C",
+            startedAt: start,
+            directory: directory,
+            captureOrigin: MeetingLiveOriginBox(),
+            startedHostTime: .zero,
+            writeInterval: .zero
+        )
+        let url = directory.appendingPathComponent(MeetingHTMLTranscript.filename)
+        try await writer.start(with: .empty)
+        XCTAssertTrue(try String(contentsOf: url, encoding: .utf8).contains("Recording"))
+
+        let utterance = MeetingLiveUtterance(id: UUID(), speaker: .them, text: "<script>check</script> & notes", start: 12, end: 13)
+        let first = MeetingLiveTranscriptSnapshot(revision: 1, utterances: [utterance], availability: .available)
+        await writer.update(first)
+        for _ in 0..<100 {
+            if try String(contentsOf: url, encoding: .utf8).contains("&lt;script&gt;check&lt;/script&gt; &amp; notes") { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let live = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(live.contains("A &lt; B &amp; C"))
+        XCTAssertTrue(live.contains("&lt;script&gt;check&lt;/script&gt; &amp; notes"))
+        XCTAssertTrue(live.contains("00:12"))
+        XCTAssertTrue(live.contains("Meeting audio"))
+        XCTAssertFalse(live.contains("<script>"))
+
+        var last = first.settingPartial(.init(id: UUID(), text: "Last words", start: 14), for: .you)
+        last.revision = 2
+        let openedURL = try await writer.finish(with: last, stoppedAt: start.addingTimeInterval(15))
+        XCTAssertEqual(openedURL, url)
+        let stopped = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(stopped.contains("Stopped"))
+        XCTAssertTrue(stopped.contains("Last words"))
+        XCTAssertTrue(stopped.contains("Microphone"))
+        XCTAssertTrue(stopped.contains("Partial"))
+
+        var late = last.settingPartial(.init(id: UUID(), text: "Late callback", start: 25), for: .you)
+        late.revision = 3
+        await writer.update(late)
+        let duplicate = try await writer.finish(with: late, stoppedAt: .now)
+        XCTAssertNil(duplicate)
+        try await writer.start(with: late)
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), stopped)
+    }
+
+    func testScreenshotUsesTheAudioOriginAndInterleavesWithLateCaptions() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let origin = MeetingLiveOriginBox()
+        origin.establish(CMTime(seconds: 100, preferredTimescale: 1000))
+        let writer = MeetingHTMLTranscript(
+            title: "Timeline",
+            startedAt: .now,
+            directory: directory,
+            captureOrigin: origin,
+            startedHostTime: CMTime(seconds: 95, preferredTimescale: 1000),
+            writeInterval: .zero
+        )
+        try await writer.start(with: .empty)
+        let png = try XCTUnwrap(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lFEAAAAASUVORK5CYII="))
+        let screenshotTime = CMTime(seconds: 124.25, preferredTimescale: 1000)
+        try await writer.addScreenshot(png, capturedAt: screenshotTime)
+
+        let before = MeetingLiveUtterance(id: UUID(), speaker: .you, text: "Before the image", start: 20, end: 22)
+        let after = MeetingLiveUtterance(id: UUID(), speaker: .them, text: "After the image", start: 24.5, end: 26)
+        let snapshot = MeetingLiveTranscriptSnapshot(revision: 1, utterances: [after, before], availability: .available)
+        await writer.update(snapshot)
+        let page = try await writer.finish(with: snapshot, stoppedAt: .now)
+        let url = try XCTUnwrap(page)
+        let html = try String(contentsOf: url, encoding: .utf8)
+        let precedingCaption = try XCTUnwrap(html.range(of: before.text))
+        let image = try XCTUnwrap(html.range(of: "<img src=\"screenshots/"))
+        let followingCaption = try XCTUnwrap(html.range(of: after.text))
+        XCTAssertLessThan(precedingCaption.lowerBound, image.lowerBound)
+        XCTAssertLessThan(image.lowerBound, followingCaption.lowerBound)
+        XCTAssertTrue(html.contains("<time datetime=\"PT24.25S\">00:24</time>"))
+
+        let folder = directory.appendingPathComponent("screenshots")
+        let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
+        let file = try XCTUnwrap(files.first)
+        XCTAssertEqual(files.count, 1)
+        XCTAssertEqual(try Data(contentsOf: file), png)
+        XCTAssertTrue(html.contains("src=\"screenshots/\(file.lastPathComponent)\""))
+        let manifest = directory.appendingPathComponent(CaptureTimelineImage.manifest)
+        let images = try JSONDecoder().decode([CaptureTimelineImage].self, from: Data(contentsOf: manifest))
+        XCTAssertEqual(images.count, 1)
+        XCTAssertEqual(images.first?.fileName, file.lastPathComponent)
+        XCTAssertEqual(images.first?.seconds, 24.25)
+
+        try await writer.addScreenshot(png, capturedAt: screenshotTime)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path).count, 1)
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), html)
+    }
+}
+
+@MainActor
 final class MeetingModelPreparationQueueTests: XCTestCase {
     private actor Counter {
         var active = 0
@@ -147,10 +250,21 @@ final class MeetingLiveTimeConversionTests: XCTestCase {
         // A later-arriving but earlier PTS (out-of-order tee delivery) still wins.
         XCTAssertEqual(box.establish(CMTime(value: 2, timescale: 1)), CMTime(value: 2, timescale: 1))
         XCTAssertEqual(box.establish(CMTime(value: 9, timescale: 1)), CMTime(value: 2, timescale: 1))
+        XCTAssertEqual(box.originForCaption(), CMTime(value: 2, timescale: 1))
+        XCTAssertEqual(box.establish(CMTime(value: 1, timescale: 1)), CMTime(value: 2, timescale: 1))
     }
 }
 
 final class MeetingLiveTranscriptSnapshotTests: XCTestCase {
+    func testScreenshotContextEndsAtCaptureTime() {
+        let first = MeetingLiveUtterance(id: UUID(), speaker: .you, text: "Before capture", start: 1, end: 3)
+        let overlaps = MeetingLiveUtterance(id: UUID(), speaker: .them, text: "Continues after capture", start: 3, end: 7)
+        let partial = MeetingLivePartial(id: UUID(), text: "Early partial", start: 3, end: 4)
+        let after = MeetingLivePartial(id: UUID(), text: "Later partial", start: 4, end: 8)
+        let snapshot = MeetingLiveTranscriptSnapshot(utterances: [first, overlaps], partials: [.you: partial, .them: after])
+        XCTAssertEqual(snapshot.conversation(through: 4), "[00:01] Microphone: Before capture\n[00:03] Microphone: Early partial")
+    }
+
     func testDeliveryRejectsStoppedPreviousAndDuplicateSessionUpdates() {
         let generation = UUID()
         var current = MeetingLiveTranscriptSnapshot.empty

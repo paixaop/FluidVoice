@@ -12,7 +12,7 @@ struct ScreenshotShortcutSettings: View {
     @State private var folderError: String?
 
     private var windowRefreshID: Int? {
-        self.settings.screenshotMode == .window && self.permission.isAllowed ? self.refreshRequest : nil
+        self.settings.screenshotMode.needsWindow && self.permission.isAllowed ? self.refreshRequest : nil
     }
 
     var body: some View {
@@ -36,12 +36,18 @@ struct ScreenshotShortcutSettings: View {
                 .fluidOutlinedButton()
             }
 
-            if self.permission.isAllowed, self.settings.screenshotMode == .window {
+            if self.permission.isAllowed, self.settings.screenshotMode.needsWindow {
                 self.windowControls
             } else if self.permission.hasChecked, !self.permission.isAllowed,
-                      self.settings.screenshotHotkeyShortcut != nil || self.settings.screenshotMode == .window
+                      self.settings.screenshotHotkeyShortcut != nil || self.settings.screenshotMode.needsWindow
             {
                 self.permissionControls
+            }
+
+            if self.settings.screenshotMode == .scrollingWindow {
+                Text("Hover over the area to capture and press your shortcut. FluidVoice scrolls the window and restores its position.")
+                    .foregroundStyle(self.theme.palette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if let error = self.folderError {

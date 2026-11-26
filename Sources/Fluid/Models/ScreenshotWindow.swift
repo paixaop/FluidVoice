@@ -4,16 +4,22 @@ import Foundation
 enum ScreenshotMode: String, CaseIterable {
     case fullScreen
     case window
+    case scrollingWindow
+
+    var needsWindow: Bool {
+        self != .fullScreen
+    }
 
     var title: String {
         switch self {
         case .fullScreen: "Full Screen (Main Display)"
         case .window: "Selected Window"
+        case .scrollingWindow: "Scrolling Window / Web Page"
         }
     }
 }
 
-nonisolated struct ScreenshotWindow: Codable, Equatable, Identifiable, Sendable {
+nonisolated struct ScreenshotWindow: Codable, Equatable, Identifiable {
     let id: CGWindowID
     let processID: pid_t
     let launchDate: Date
