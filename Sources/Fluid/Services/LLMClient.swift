@@ -184,6 +184,7 @@ final nonisolated class LLMClient: @unchecked Sendable {
 
         /// Timeout configuration (nil = use default)
         var timeoutSeconds: TimeInterval?
+        var requiresCompletedResponsesStream = false
 
         // Optional real-time callbacks (for streaming UI updates)
         var onThinkingStart: (@Sendable () -> Void)?
@@ -552,6 +553,8 @@ final nonisolated class LLMClient: @unchecked Sendable {
                     "role": role,
                     "content": content,
                 ])
+            } else if let content = message["content"] as? [[String: Any]], !content.isEmpty {
+                input.append(["role": role, "content": content])
             }
 
             guard let toolCalls = message["tool_calls"] as? [[String: Any]] else { continue }
@@ -633,6 +636,7 @@ final nonisolated class LLMClient: @unchecked Sendable {
         var contentBuffer: [String] = []
         var toolCallsByIndex: [Int: ToolCallAccumulator] = [:]
         var didLogFirstContent = false
+        var completed = false
 
         for try await rawLine in bytes.lines {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
@@ -654,6 +658,17 @@ final nonisolated class LLMClient: @unchecked Sendable {
             }
 
             switch type {
+            case "response.completed":
+                completed = true
+            case "response.failed", "response.incomplete", "error":
+                guard config.requiresCompletedResponsesStream else { continue }
+                let response = event["response"] as? [String: Any]
+                let error = (response?["error"] ?? event["error"]) as? [String: Any]
+                let code = (error?["code"] ?? event["code"]) as? String
+                if code?.hasPrefix("subscription_sharing_") == true {
+                    throw LLMError.invalidRequest("ChatGPT plan use is unavailable or has reached its limit. Check your ChatGPT usage settings.")
+                }
+                throw LLMError.invalidRequest("OpenAI didn’t complete the response.")
             case "response.output_text.delta":
                 if let delta = event["delta"] as? String {
                     if !didLogFirstContent, !delta.isEmpty {
@@ -701,6 +716,7 @@ final nonisolated class LLMClient: @unchecked Sendable {
             }
         }
 
+        if config.requiresCompletedResponsesStream, !completed { throw LLMError.invalidResponse }
         let toolCalls = ToolCallAccumulator.toolCalls(from: toolCallsByIndex)
 
         let parsed = Response(
